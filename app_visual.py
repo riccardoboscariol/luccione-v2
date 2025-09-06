@@ -47,12 +47,18 @@ def fade_color(hex_color, fade_factor):
         return hex_color
 
 # Inizializzazione session state
-if 'initial_data' not in st.session_state:
-    st.session_state.initial_data = pd.DataFrame()
-if 'spiral_count' not in st.session_state:
-    st.session_state.spiral_count = 0
+if 'sheet_data' not in st.session_state:
+    st.session_state.sheet_data = pd.DataFrame()
+if 'last_data_hash' not in st.session_state:
+    st.session_state.last_data_hash = ""
+if 'current_spirals' not in st.session_state:
+    st.session_state.current_spirals = []
+if 'new_spiral_time' not in st.session_state:
+    st.session_state.new_spiral_time = 0
+if 'last_update_time' not in st.session_state:
+    st.session_state.last_update_time = time.time()
 
-# Funzione per ottenere i dati (semplificata)
+# Funzione per ottenere i dati
 def get_sheet_data():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -65,22 +71,40 @@ def get_sheet_data():
         records = sheet.get_all_records()
         return pd.DataFrame(records)
     except Exception as e:
-        return pd.DataFrame()
+        return st.session_state.sheet_data
 
-# Carica i dati iniziali solo una volta
-if st.session_state.initial_data.empty:
-    st.session_state.initial_data = get_sheet_data()
-    st.session_state.spiral_count = len(st.session_state.initial_data)
+# Pulsante per aggiornamento manuale
+if st.button("🔄 Aggiorna Manualmente", key="manual_refresh"):
+    st.session_state.last_data_hash = ""  # Forza aggiornamento
+    st.session_state.last_update_time = time.time()
+    st.rerun()
 
-df = st.session_state.initial_data
-current_count = len(df)
+# Carica i dati
+current_time = time.time()
+df = get_sheet_data()
+current_data_hash = str(hash(str(df.values.tobytes()))) if not df.empty else "empty"
 
-# URL corretto per l'immagine da GitHub
-FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
+# Verifica se ci sono nuove spirale
+new_spiral_detected = False
+spiral_count_change = 0
 
-# Genera le spirali
+if current_data_hash != st.session_state.last_data_hash:
+    old_count = len(st.session_state.sheet_data) if not st.session_state.sheet_data.empty else 0
+    new_count = len(df)
+    spiral_count_change = new_count - old_count
+    
+    if spiral_count_change > 0:
+        st.session_state.new_spiral_time = current_time
+        new_spiral_detected = True
+        st.success(f"✨ {spiral_count_change} nuova(e) spirale(e) aggiunta(e)!")
+    
+    st.session_state.sheet_data = df
+    st.session_state.last_data_hash = current_data_hash
+    st.session_state.last_update_time = current_time
+
+# Genera le spirali - ESTETICA ORIGINALE
 palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-theta = np.linspace(0, 10 * np.pi, 800)
+theta = np.linspace(0, 12 * np.pi, 1200)  # Tornato a 1200 punti
 spirali = []
 
 for idx, row in df.iterrows():
@@ -88,56 +112,60 @@ for idx, row in df.iterrows():
               row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
     media = np.mean(scores)
     
-    size_factor = 0.3 + (media / 5) * 0.7
-    intensity = np.clip(size_factor, 0.4, 1.0)
-    freq = 0.8 + size_factor * (2.5 - 0.8)
+    # LOGICA ORIGINALE
+    size_factor = media / 5
+    intensity = np.clip(size_factor, 0.2, 1.0)
+    freq = 0.5 + (media / 5) * (3.0 - 0.5)
 
     std_dev = np.std(scores) if len(scores) > 1 else 0
-    coherence = 1 - min(std_dev / 1.5, 1)
+    coherence = 1 - min(std_dev / 2, 1)  # Formula originale
     
     dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
     base_color = palette[dominant_dim % len(palette)]
     
-    if coherence > 0.6: 
+    if coherence > 0.7:  # Soglia originale
         color = base_color
     else:
-        color = fade_color(base_color, (0.6 - coherence) * 1.2)
+        color = fade_color(base_color, 1 - coherence)
 
-    r = 0.4 + size_factor * 0.4
-    radius = r * (theta / max(theta)) * 4.0
+    # Dimensioni originali
+    r = 0.3 + idx * 0.08
+    radius = r * (theta / max(theta)) * intensity * 4.5
 
-    x = radius * np.cos(theta + idx * 0.7)
-    y = radius * np.sin(theta + idx * 0.7)
+    x = radius * np.cos(theta + idx)
+    y = radius * np.sin(theta + idx)
 
-    if len(scores) >= 4:
-        pattern_score = (scores[0] - scores[2]) + (scores[1] - scores[3])
-        if pattern_score > 0.8: 
-            y_proj = y * 0.5 + x * 0.25
-        elif pattern_score < -0.8: 
-            y_proj = y * 0.5 - x * 0.25
-        else: 
-            y_proj = y * 0.6
-    else: 
-        y_proj = y * 0.6
+    # Inclinazione alternata originale
+    if idx % 2 == 0:
+        y_proj = y * 0.5 + x * 0.2
+    else:
+        y_proj = y * 0.5 - x * 0.2
+
+    is_new = (new_spiral_detected and idx >= len(st.session_state.sheet_data) - spiral_count_change and 
+              current_time - st.session_state.new_spiral_time < 10)
 
     spirali.append({
         "x": x.tolist(), "y": y_proj.tolist(), "color": color,
         "intensity": float(intensity), "freq": float(freq), "id": idx,
-        "base_color": base_color
+        "is_new": is_new, "base_color": base_color
     })
 
-# Calcolo offset
+# Calcolo offset originale
 if spirali:
     all_y = np.concatenate([np.array(s["y"]) for s in spirali])
     y_min, y_max = all_y.min(), all_y.max()
     y_range = y_max - y_min
-    OFFSET = -0.05 * y_range
+    OFFSET = -0.06 * y_range  # Offset originale
     for s in spirali: 
         s["y"] = (np.array(s["y"]) + OFFSET).tolist()
 
+st.session_state.current_spirals = spirali
 data_json = json.dumps({"spirali": spirali})
 
-# 📊 HTML + JS con AUTO-AGGIORNAMENTO REALE
+# URL corretto per l'immagine
+FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
+
+# 📊 HTML + JS - ESTETICA ORIGINALE
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -161,7 +189,7 @@ html_code = f"""
     top: 15px;
     right: 15px;
     z-index: 10000;
-    background: rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.2);
     color: white;
     border: none;
     padding: 12px 16px;
@@ -170,7 +198,7 @@ html_code = f"""
     font-size: 24px;
 }}
 #fullscreen-btn:hover {{
-    background: rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.3);
 }}
 #status {{
     position: absolute;
@@ -188,128 +216,42 @@ html_code = f"""
     bottom: 20px;
     right: 20px;
     z-index: 10000;
-    width: 80px;
-    height: 80px;
-    border-radius: 12px;
-    border: 2px solid rgba(255,255,255,0.4);
-    box-shadow: 0 0 25px rgba(0,0,0,0.6);
+    width: 60px;
+    height: 60px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.3);
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
     transition: all 0.3s ease;
-    opacity: 0.85;
+    opacity: 0.8;
     object-fit: cover;
 }}
 #logo:hover {{
-    transform: scale(1.15);
+    transform: scale(1.1);
     opacity: 1;
-    box-shadow: 0 0 35px rgba(255,255,255,0.3);
 }}
 :fullscreen #logo {{
-    width: 100px;
-    height: 100px;
+    width: 80px;
+    height: 80px;
 }}
-.new-spiral-notification {{
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.8);
-    color: #ffeb3b;
-    padding: 20px 30px;
-    border-radius: 15px;
-    border: 2px solid #ffeb3b;
-    font-size: 24px;
-    font-weight: bold;
-    z-index: 100000;
-    animation: fadeInOut 2s ease-in-out;
-}}
-@keyframes fadeInOut {{
-    0% {{ opacity: 0; transform: translate(-50%, -50%) scale(0.8); }}
-    20% {{ opacity: 1; transform: translate(-50%, -50%) scale(1.1); }}
-    80% {{ opacity: 1; transform: translate(-50%, -50%) scale(1.1); }}
-    100% {{ opacity: 0; transform: translate(-50%, -50%) scale(0.8); }}
+/* Animazione originale per nuove spirale */
+@keyframes pulse {{
+    0% {{ opacity: 1; }}
+    50% {{ opacity: 0.5; }}
+    100% {{ opacity: 1; }}
 }}
 </style>
 </head>
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <div id="status">Spirali: {current_count} | Auto-aggiornamento: ATTIVO</div>
+    <div id="status">Spirali: {len(df)} | Ultimo agg: {time.strftime('%H:%M:%S')}</div>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
     <div id="graph"></div>
 </div>
 
 <script>
-const INITIAL_DATA = {data_json};
-let currentData = INITIAL_DATA;
+const DATA = {data_json};
 let t0 = Date.now();
-let isFullscreen = false;
-let currentSpiralCount = {current_count};
-let lastCheckTime = Date.now();
-let checkInterval;
-
-// Funzione per fare polling al server (simulato)
-async function checkForNewSpirals() {{
-    try {{
-        // In una implementazione reale, qui faresti una chiamata API
-        // Per ora simuliamo un controllo ogni 5 secondi
-        
-        const now = Date.now();
-        const timeDiff = Math.floor((now - lastCheckTime) / 1000);
-        
-        // Simula occasionalmente una nuova spirale (per testing)
-        const shouldAddSpiral = Math.random() > 0.8 && currentSpiralCount < 20;
-        
-        if (shouldAddSpiral) {{
-            currentSpiralCount++;
-            lastCheckTime = now;
-            
-            // Aggiungi una nuova spirale simulata
-            const newSpiral = {{
-                x: Array.from({{length: 100}}, (_, i) => Math.cos(i * 0.1) * (2 + Math.random() * 2)),
-                y: Array.from({{length: 100}}, (_, i) => Math.sin(i * 0.1) * (2 + Math.random() * 2)),
-                color: '#ff6b6b',
-                intensity: 0.8,
-                freq: 1.5,
-                id: currentSpiralCount,
-                base_color: '#ff6b6b',
-                is_new: true
-            }};
-            
-            currentData.spirali.push(newSpiral);
-            
-            // Mostra notifica
-            showNotification('✨ Nuova spirale aggiunta!');
-            
-            // Aggiorna il contatore
-            updateSpiralCount();
-        }}
-        
-        document.getElementById('status').textContent = 
-            `Spirali: ${{currentSpiralCount}} | Ultimo check: ${{new Date().toLocaleTimeString()}}`;
-            
-    }} catch (error) {{
-        console.log('Errore nel check:', error);
-    }}
-}}
-
-function showNotification(message) {{
-    const notification = document.createElement('div');
-    notification.className = 'new-spiral-notification';
-    notification.textContent = message;
-    notification.innerHTML = message + '<br><span style="font-size: 16px;">🔄 Aggiornamento automatico</span>';
-    
-    document.getElementById('graph-container').appendChild(notification);
-    
-    setTimeout(() => {{
-        if (notification.parentNode) {{
-            notification.parentNode.removeChild(notification);
-        }}
-    }}, 2000);
-}}
-
-function updateSpiralCount() {{
-    document.getElementById('status').textContent = 
-        `Spirali: ${{currentSpiralCount}} | Ultimo aggiornamento: ${{new Date().toLocaleTimeString()}}`;
-}}
 
 function toggleFullscreen() {{
     const container = document.getElementById('graph-container');
@@ -326,43 +268,28 @@ function buildTraces(time){{
     const traces = [];
     const currentTime = Date.now();
     
-    currentData.spirali.forEach(s => {{
-        const step = 3;
-        const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * s.freq * time);
+    DATA.spirali.forEach(s => {{
+        const step = 4;  // Step originale
+        const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);  // Formula originale
         
-        let pulseEffect = 0;
+        let glowEffect = 0;
         let glowColor = s.color;
-        let lineWidth = 2 + s.intensity * 4;
         
-        // Effetto per nuove spirale
+        // EFFETTO ORIGINALE per nuove spirale
         if (s.is_new) {{
-            const pulseTime = (currentTime - t0) / 1000;
-            const pulseSpeed = 15;
+            const explosionProgress = Math.min(1, (currentTime - t0) / 15000);
+            glowEffect = 3;  // Effetto più sottile
+            glowColor = s.base_color;  // Mantieni il colore originale
             
-            pulseEffect = 10 * Math.sin(pulseTime * pulseSpeed * Math.PI * 2);
-            lineWidth += Math.abs(pulseEffect) * 2;
-            
-            const pulsePhase = Math.sin(pulseTime * pulseSpeed * Math.PI);
-            if (pulsePhase > 0.8) {{
-                glowColor = '#FFFFFF';
-                lineWidth += 15;
-            }} else if (pulsePhase > 0.4) {{
-                glowColor = '#FFD700';
-                lineWidth += 10;
-            }} else {{
-                glowColor = s.color;
-                lineWidth += 6;
-            }}
-            
-            // Rimuovi il flag dopo un po'
-            if (pulseTime > 3) {{
-                s.is_new = false;
+            // Aggiungi glow solo per le nuove
+            if (explosionProgress < 0.5) {{
+                glowEffect = 5 * (1 - explosionProgress/0.5);
             }}
         }}
         
         for(let j=1; j < s.x.length; j += step){{
             const segmentProgress = j / s.x.length;
-            const alpha = (0.3 + 0.6 * segmentProgress) * flicker;
+            const alpha = (0.2 + 0.7 * segmentProgress) * flicker;  // Formula originale
             
             traces.push({{
                 x: s.x.slice(j-1, j+1),
@@ -370,10 +297,10 @@ function buildTraces(time){{
                 mode: "lines",
                 line: {{
                     color: glowColor, 
-                    width: lineWidth,
+                    width: 1.5 + s.intensity * 3 + glowEffect,  // Formula originale
                     shape: 'spline'
                 }},
-                opacity: Math.max(0.2, alpha),
+                opacity: Math.max(0, alpha),
                 hoverinfo: "none",
                 showlegend: false,
                 type: "scatter"
@@ -407,22 +334,27 @@ function render(){{
     requestAnimationFrame(render);
 }}
 
-// Inizia il rendering e il polling
+// Inizia il rendering
 t0 = Date.now();
 render();
 
-// Avvia il polling ogni 5 secondi
-checkInterval = setInterval(checkForNewSpirals, 5000);
-
 // Gestione fullscreen
 document.addEventListener('fullscreenchange', () => {{
-    isFullscreen = !!document.fullscreenElement;
+    const logo = document.getElementById('logo');
+    if (document.fullscreenElement) {{
+        logo.style.width = '80px';
+        logo.style.height = '80px';
+    }} else {{
+        logo.style.width = '60px';
+        logo.style.height = '60px';
+    }}
 }});
 
-// Pulizia all'uscita
-window.addEventListener('beforeunload', () => {{
-    clearInterval(checkInterval);
-}});
+// Aggiorna l'orario ogni minuto
+setInterval(() => {{
+    document.getElementById('status').textContent = 
+        `Spirali: {len(df)} | Ultimo agg: ${{new Date().toLocaleTimeString()}}`;
+}}, 60000);
 </script>
 </body>
 </html>
@@ -431,36 +363,39 @@ window.addEventListener('beforeunload', () => {{
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# LEGENDA E STATO
+# LEGENDA ORIGINALE
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA DI AUTO-AGGIORNAMENTO")
+st.markdown("## 🎨 LEGENDA DELL'OPERA")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Spirali Attuali", current_count)
-    st.info("""
-    **✨ Funzionalità attive:**
-    - Auto-aggiornamento ogni 5 secondi
-    - Notifiche per nuove spirale
-    - Contatore in tempo reale
-    - Effetti visivi per nuove aggiunte
-    """)
+    st.markdown("**🎯 Dimensioni Empathic**")
+    st.markdown("- **🔴 Perspective Taking** - Mettersi nei panni altrui")
+    st.markdown("- **🟠 Fantasy** - Identificazione con personaggi")  
+    st.markdown("- **🔵 Empathic Concern** - Compassione e preoccupazione")
+    st.markdown("- **🟣 Personal Distress** - Disagio emotivo")
 
 with col2:
-    st.metric("Stato Sistema", "🟢 ATTIVO")
-    st.info("""
-    **🔧 Come funziona:**
-    1. JavaScript fa polling ogni 5 secondi
-    2. Nuove spirale aggiunte dinamicamente
-    3. Contatore aggiornato in tempo reale
-    4. Nessun refresh della pagina
-    """)
+    st.markdown("**✨ Caratteristiche Visive**")
+    st.markdown("- **Dimensione**: Maggiore empatia → Spirale più grande")
+    st.markdown("- **Colore**: Dominanza di una dimensione empatica")
+    st.markdown("- **Saturazione**: Colori puri = risposte coerenti")
+    st.markdown("- **Pulsazione**: Più veloce = maggiore intensità emotiva")
 
 st.markdown("---")
-st.success("""
-**✅ Sistema attivo!** Il contatore si aggiornerà automaticamente ogni 5 secondi.
-Le nuove spirale appariranno con effetti visivi e notifiche.
+st.markdown(f"**⏰ Ultimo aggiornamento**: {time.strftime('%H:%M:%S')}")
+st.markdown(f"**📊 Spirali totali**: {len(df)}")
+
+if spiral_count_change > 0:
+    st.markdown(f"**✨ Nuove aggiunte**: {spiral_count_change} spirale(e)")
+
+st.info("""
+**🔄 Istruzioni aggiornamento:**
+1. Compila il questionario in un'altra finestra
+2. Torna qui e clicca **"Aggiorna Manualmente"**
+3. Le nuove spirale appariranno con effetto glow
+4. Il contatore si aggiornerà immediatamente
 """)
 
 
