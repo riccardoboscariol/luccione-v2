@@ -8,8 +8,8 @@ import time
 import colorsys
 from streamlit_autorefresh import st_autorefresh
 
-# 🔄 Auto-refresh ogni 30 secondi
-st_autorefresh(interval=30000, key="data_refresh")
+# 🔄 Auto-refresh ogni 15 secondi (più frequente)
+st_autorefresh(interval=15000, key="data_refresh")
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
@@ -29,46 +29,25 @@ st.markdown("""
     .stApp {
         background: black;
     }
-    .stComponents iframe {
-        height: 70vh !important;
-        width: 100% !important;
-        border: none;
-        border-radius: 15px;
-    }
     /* Nascondi elementi non necessari */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Pulsante refresh */
-    .refresh-btn {
-        background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+    /* Loading indicator */
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
         color: white;
-        border: none;
-        padding: 12px 24px;
-        border-radius: 8px;
-        font-size: 16px;
-        font-weight: bold;
-        cursor: pointer;
-        margin: 10px 0;
-        transition: all 0.3s ease;
-    }
-    .refresh-btn:hover {
-        background: linear-gradient(45deg, #ee5a24, #ff6b6b);
-        transform: scale(1.05);
-    }
-    
-    /* Status indicator */
-    .status-indicator {
-        display: inline-block;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        margin-right: 8px;
-    }
-    .status-live {
-        background: #00ff00;
-        box-shadow: 0 0 10px #00ff00;
+        font-size: 24px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -91,9 +70,9 @@ def fade_color(hex_color, fade_factor):
     except:
         return hex_color
 
-# Gestione della cache in session_state
+# Inizializzazione session state
 if 'sheet_data' not in st.session_state:
-    st.session_state.sheet_data = None
+    st.session_state.sheet_data = pd.DataFrame()
 if 'last_update' not in st.session_state:
     st.session_state.last_update = 0
 if 'record_count' not in st.session_state:
@@ -104,6 +83,10 @@ if 'spiral_highlight_time' not in st.session_state:
     st.session_state.spiral_highlight_time = 0
 if 'last_data_hash' not in st.session_state:
     st.session_state.last_data_hash = ""
+if 'current_spirals' not in st.session_state:
+    st.session_state.current_spirals = []
+if 'is_initialized' not in st.session_state:
+    st.session_state.is_initialized = False
 
 def get_sheet_data():
     """Recupera i dati dal foglio Google con gestione degli errori"""
@@ -124,109 +107,103 @@ def get_sheet_data():
         st.error(f"Errore nel caricamento dati: {str(e)}")
         return pd.DataFrame(), 0
 
-# Pulsante per forzare il refresh
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    if st.button("🔄 Aggiorna Ora i Dati", key="refresh_button", use_container_width=True):
-        st.session_state.last_update = 0
-        st.rerun()
+# Mostra loading indicator durante l'aggiornamento
+if not st.session_state.is_initialized:
+    st.markdown("""
+    <div class="loading-overlay">
+        <div>🔄 Caricamento opera...</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# 📥 Controlla se è necessario aggiornare i dati (ogni 30 secondi con auto-refresh)
+# 📥 Aggiorna dati in background
 current_time = time.time()
-df, record_count = get_sheet_data()
-
-# Calcola hash dei dati per verificare cambiamenti
-current_data_hash = str(hash(str(df.values.tobytes()))) if not df.empty else "empty"
-
-# Verifica se ci sono nuovi dati
-data_changed = current_data_hash != st.session_state.last_data_hash
-new_spiral_detected = False
-
-if data_changed:
-    if st.session_state.sheet_data is not None and len(df) > len(st.session_state.sheet_data):
-        st.session_state.new_spiral_id = len(st.session_state.sheet_data)
-        st.session_state.spiral_highlight_time = current_time
-        new_spiral_detected = True
-        st.success("✨ Nuova spirale aggiunta all'opera!")
+if current_time - st.session_state.last_update > 10:  # 10 secondi tra gli aggiornamenti
+    df, record_count = get_sheet_data()
     
-    st.session_state.sheet_data = df
-    st.session_state.record_count = len(df)
-    st.session_state.last_data_hash = current_data_hash
-    st.session_state.last_update = current_time
-
-# Mostra stato aggiornamento
-st.markdown(f"""
-<div style='color: white; text-align: center; padding: 10px; background: rgba(0,0,0,0.7); border-radius: 10px; margin: 10px 0;'>
-    <span class="status-indicator status-live"></span>
-    <strong>LIVE</strong> - Aggiornamento automatico ogni 30 secondi
-    <br>Ultimo aggiornamento: {time.strftime('%H:%M:%S')}
-    <br>Spirali totali: {len(df)}
-</div>
-""", unsafe_allow_html=True)
-
-# 🎨 Genera dati spirali
-palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-theta = np.linspace(0, 10 * np.pi, 1000)
-spirali = []
-
-for idx, row in df.iterrows():
-    scores = [row.get("PT", 3), row.get("Fantasy", 3), 
-              row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
-    media = np.mean(scores)
+    # Calcola hash per verificare cambiamenti
+    current_data_hash = str(hash(str(df.values.tobytes()))) if not df.empty else "empty"
     
-    size_factor = 0.3 + (media / 5) * 0.7
-    intensity = np.clip(size_factor, 0.4, 1.0)
-    freq = 0.8 + size_factor * (2.5 - 0.8)
+    if current_data_hash != st.session_state.last_data_hash:
+        new_spiral_detected = False
+        
+        if st.session_state.sheet_data is not None and len(df) > len(st.session_state.sheet_data):
+            st.session_state.new_spiral_id = len(st.session_state.sheet_data)
+            st.session_state.spiral_highlight_time = current_time
+            new_spiral_detected = True
+        
+        st.session_state.sheet_data = df
+        st.session_state.record_count = len(df)
+        st.session_state.last_data_hash = current_data_hash
+        st.session_state.last_update = current_time
+        
+        # Rigenera le spirali solo se i dati sono cambiati
+        palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
+        theta = np.linspace(0, 10 * np.pi, 1000)
+        spirali = []
+        
+        for idx, row in df.iterrows():
+            scores = [row.get("PT", 3), row.get("Fantasy", 3), 
+                      row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
+            media = np.mean(scores)
+            
+            size_factor = 0.3 + (media / 5) * 0.7
+            intensity = np.clip(size_factor, 0.4, 1.0)
+            freq = 0.8 + size_factor * (2.5 - 0.8)
 
-    std_dev = np.std(scores) if len(scores) > 1 else 0
-    coherence = 1 - min(std_dev / 1.5, 1)
-    
-    dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
-    base_color = palette[dominant_dim % len(palette)]
-    
-    if coherence > 0.6: 
-        color = base_color
-    else:
-        color = fade_color(base_color, (0.6 - coherence) * 1.2)
+            std_dev = np.std(scores) if len(scores) > 1 else 0
+            coherence = 1 - min(std_dev / 1.5, 1)
+            
+            dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
+            base_color = palette[dominant_dim % len(palette)]
+            
+            if coherence > 0.6: 
+                color = base_color
+            else:
+                color = fade_color(base_color, (0.6 - coherence) * 1.2)
 
-    r = 0.4 + size_factor * 0.4
-    radius = r * (theta / max(theta)) * 4.0
+            r = 0.4 + size_factor * 0.4
+            radius = r * (theta / max(theta)) * 4.0
 
-    x = radius * np.cos(theta + idx * 0.7)
-    y = radius * np.sin(theta + idx * 0.7)
+            x = radius * np.cos(theta + idx * 0.7)
+            y = radius * np.sin(theta + idx * 0.7)
 
-    if len(scores) >= 4:
-        pattern_score = (scores[0] - scores[2]) + (scores[1] - scores[3])
-        if pattern_score > 0.8: 
-            y_proj = y * 0.5 + x * 0.25
-        elif pattern_score < -0.8: 
-            y_proj = y * 0.5 - x * 0.25
-        else: 
-            y_proj = y * 0.6
-    else: 
-        y_proj = y * 0.6
+            if len(scores) >= 4:
+                pattern_score = (scores[0] - scores[2]) + (scores[1] - scores[3])
+                if pattern_score > 0.8: 
+                    y_proj = y * 0.5 + x * 0.25
+                elif pattern_score < -0.8: 
+                    y_proj = y * 0.5 - x * 0.25
+                else: 
+                    y_proj = y * 0.6
+            else: 
+                y_proj = y * 0.6
 
-    is_new = (idx == st.session_state.new_spiral_id and 
-              current_time - st.session_state.spiral_highlight_time < 15)
+            is_new = (idx == st.session_state.new_spiral_id and 
+                      current_time - st.session_state.spiral_highlight_time < 15)
 
-    spirali.append({
-        "x": x.tolist(), "y": y_proj.tolist(), "color": color,
-        "intensity": float(intensity), "freq": float(freq), "id": idx,
-        "is_new": is_new, "base_color": base_color, "media": float(media)
-    })
+            spirali.append({
+                "x": x.tolist(), "y": y_proj.tolist(), "color": color,
+                "intensity": float(intensity), "freq": float(freq), "id": idx,
+                "is_new": is_new, "base_color": base_color, "media": float(media)
+            })
 
-# 📏 Calcolo offset verticale
-if spirali:
-    all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-    y_min, y_max = all_y.min(), all_y.max()
-    y_range = y_max - y_min
-    OFFSET = -0.05 * y_range
-    for s in spirali: 
-        s["y"] = (np.array(s["y"]) + OFFSET).tolist()
+        # Calcolo offset verticale
+        if spirali:
+            all_y = np.concatenate([np.array(s["y"]) for s in spirali])
+            y_min, y_max = all_y.min(), all_y.max()
+            y_range = y_max - y_min
+            OFFSET = -0.05 * y_range
+            for s in spirali: 
+                s["y"] = (np.array(s["y"]) + OFFSET).tolist()
 
+        st.session_state.current_spirals = spirali
+        st.session_state.is_initialized = True
+
+# Usa le spirali dalla session state
+spirali = st.session_state.current_spirals
 data_json = json.dumps({"spirali": spirali})
 
-# 📊 HTML + JS con effetto esplosione di luce
+# 📊 HTML + JS con aggiornamento senza ricaricare
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -280,7 +257,8 @@ html_code = f"""
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
-let hasRenderedNewSpiral = false;
+let currentTraces = [];
+let explosionActive = false;
 
 function toggleFullscreen() {{
     const container = document.getElementById('graph-container');
@@ -294,17 +272,21 @@ function toggleFullscreen() {{
 }}
 
 function createExplosionParticles(x, y, intensity) {{
+    if (explosionActive) return;
+    explosionActive = true;
+    
     const container = document.getElementById('graph-container');
-    const particleCount = 50 + intensity * 100;
+    const particleCount = 80 + intensity * 120;
     
     for (let i = 0; i < particleCount; i++) {{
         const particle = document.createElement('div');
         particle.className = 'explosion-particle';
         
-        const size = 8 + Math.random() * 20 * intensity;
+        const size = 10 + Math.random() * 25 * intensity;
         const angle = Math.random() * Math.PI * 2;
-        const distance = 80 + Math.random() * 200 * intensity;
-        const duration = 1000 + Math.random() * 1500;
+        const distance = 100 + Math.random() * 250 * intensity;
+        const duration = 1200 + Math.random() * 1800;
+        const delay = Math.random() * 300;
         
         particle.style.width = size + 'px';
         particle.style.height = size + 'px';
@@ -316,39 +298,46 @@ function createExplosionParticles(x, y, intensity) {{
         
         container.appendChild(particle);
         
-        // Animazione particella con effetto esplosione
-        particle.animate([
-            {{
-                transform: 'scale(0) translate(0, 0)',
-                opacity: 1,
-                filter: 'blur(0px) brightness(5)'
-            }},
-            {{
-                transform: 'scale(4) translate(0, 0)',
-                opacity: 0.9,
-                filter: 'blur(5px) brightness(8)'
-            }},
-            {{
-                transform: `scale(1) translate(${{Math.cos(angle) * distance}}px, ${{Math.sin(angle) * distance}}px)`,
-                opacity: 0,
-                filter: 'blur(15px) brightness(1)'
-            }}
-        ], {{
-            duration: duration,
-            easing: 'cubic-bezier(0.1, 0.8, 0.2, 1)'
-        }});
-        
+        // Animazione con delay casuale per effetto più naturale
         setTimeout(() => {{
-            if (particle.parentNode) {{
-                particle.parentNode.removeChild(particle);
-            }}
-        }}, duration);
+            particle.animate([
+                {{
+                    transform: 'scale(0) translate(0, 0)',
+                    opacity: 1,
+                    filter: 'blur(0px) brightness(8)'
+                }},
+                {{
+                    transform: 'scale(6) translate(0, 0)',
+                    opacity: 0.9,
+                    filter: 'blur(8px) brightness(12)'
+                }},
+                {{
+                    transform: `scale(1) translate(${{Math.cos(angle) * distance}}px, ${{Math.sin(angle) * distance}}px)`,
+                    opacity: 0,
+                    filter: 'blur(20px) brightness(1)'
+                }}
+            ], {{
+                duration: duration,
+                easing: 'cubic-bezier(0.1, 0.8, 0.2, 1)'
+            }});
+            
+            setTimeout(() => {{
+                if (particle.parentNode) {{
+                    particle.parentNode.removeChild(particle);
+                }}
+                if (i === particleCount - 1) {{
+                    explosionActive = false;
+                }}
+            }}, duration);
+        }}, delay);
     }}
 }}
 
 function buildTraces(time){{
     const traces = [];
     const currentTime = Date.now();
+    let hasNewSpiral = false;
+    let newSpiralData = null;
     
     DATA.spirali.forEach(s => {{
         const step = 3;
@@ -359,42 +348,39 @@ function buildTraces(time){{
         let lineWidth = 2 + s.intensity * 4;
         
         if (s.is_new) {{
-            const explosionProgress = Math.min(1, (currentTime - t0) / 2000);
+            hasNewSpiral = true;
+            newSpiralData = s;
+            const explosionProgress = Math.min(1, (currentTime - t0) / 2500);
             
             if (explosionProgress < 0.3) {{
-                // Fase 1: Luce bianca accecante
                 glowColor = '#ffffff';
-                explosionEffect = 25 * (1 - explosionProgress/0.3);
+                explosionEffect = 30 * (1 - explosionProgress/0.3);
                 lineWidth += explosionEffect;
                 
-                if (explosionProgress < 0.1 && !hasRenderedNewSpiral) {{
+                if (explosionProgress < 0.1) {{
                     const centerX = (Math.max(...s.x) + Math.min(...s.x)) / 2;
                     const centerY = (Math.max(...s.y) + Math.min(...s.y)) / 2;
                     createExplosionParticles(centerX, centerY, s.intensity);
-                    hasRenderedNewSpiral = true;
                 }}
                 
             }} else if (explosionProgress < 0.6) {{
-                // Fase 2: Transizione all'oro
                 const goldProgress = (explosionProgress - 0.3) / 0.3;
                 glowColor = goldProgress < 0.5 ? '#ffffff' : '#ffeb3b';
-                explosionEffect = 15 * (1 - goldProgress);
+                explosionEffect = 20 * (1 - goldProgress);
                 lineWidth += explosionEffect;
                 
             }} else if (explosionProgress < 0.9) {{
-                // Fase 3: Transizione al colore originale
                 const colorProgress = (explosionProgress - 0.6) / 0.3;
                 const r = Math.floor(255 * colorProgress + 255 * (1-colorProgress));
                 const g = Math.floor(235 * colorProgress + 255 * (1-colorProgress));
                 const b = Math.floor(59 * colorProgress + 255 * (1-colorProgress));
                 glowColor = `rgb(${{r}}, ${{g}}, ${{b}})`;
-                explosionEffect = 8 * (1 - colorProgress);
+                explosionEffect = 12 * (1 - colorProgress);
                 lineWidth += explosionEffect;
                 
             }} else {{
-                // Fase 4: Ritorno alla normalità
                 glowColor = s.color;
-                explosionEffect = 3 * (1 - (explosionProgress-0.9)/0.1);
+                explosionEffect = 4 * (1 - (explosionProgress-0.9)/0.1);
                 lineWidth += explosionEffect;
             }}
         }}
@@ -419,26 +405,34 @@ function buildTraces(time){{
             }});
         }}
     }});
+    
     return traces;
 }}
 
 function render(){{
     const time = (Date.now() - t0) / 1000;
     const traces = buildTraces(time);
-    const layout = {{
-        xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
-        yaxis: {{visible: false, autorange: true}},
-        margin: {{t:0,b:0,l:0,r:0}},
-        paper_bgcolor: 'black',
-        plot_bgcolor: 'black',
-        autosize: true
-    }};
-    Plotly.react('graph', traces, layout, {{
-        displayModeBar: false,
-        scrollZoom: false,
-        responsive: true,
-        staticPlot: false
-    }});
+    
+    // Aggiorna solo se ci sono cambiamenti
+    if (JSON.stringify(traces) !== JSON.stringify(currentTraces)) {{
+        currentTraces = traces;
+        
+        const layout = {{
+            xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
+            yaxis: {{visible: false, autorange: true}},
+            margin: {{t:0,b:0,l:0,r:0}},
+            paper_bgcolor: 'black',
+            plot_bgcolor: 'black',
+            autosize: true
+        }};
+        
+        Plotly.react('graph', traces, layout, {{
+            displayModeBar: false,
+            scrollZoom: false,
+            responsive: true,
+            staticPlot: false
+        }});
+    }}
     
     requestAnimationFrame(render);
 }}
@@ -451,6 +445,14 @@ render();
 document.addEventListener('dblclick', function() {{
     toggleFullscreen();
 }});
+
+// Previeni il ricaricamento della pagina
+window.addEventListener('beforeunload', function(e) {{
+    if (document.fullscreenElement) {{
+        e.preventDefault();
+        e.returnValue = '';
+    }}
+}});
 </script>
 </body>
 </html>
@@ -459,7 +461,7 @@ document.addEventListener('dblclick', function() {{
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=700, scrolling=False)
 
-# LEGENDA in testo normale (non in HTML)
+# LEGENDA
 st.markdown("---")
 st.markdown("## 🎨 LEGENDA DELL'OPERA 'SPECCHIO EMPATICO'")
 
@@ -480,24 +482,8 @@ with col2:
     st.markdown("- **Scintillio**: Nuove spirale con esplosione di luce")
 
 st.markdown("---")
-st.markdown("### **🚀 Come funziona**")
-st.markdown("1. Ogni partecipante completa il questionario")
-st.markdown("2. I dati vengono aggiunti al Google Sheet")
-st.markdown("3. L'opera si aggiorna **automaticamente ogni 30 secondi**")
-st.markmarkdown("4. Le nuove spirale appaiono con un'**esplosione di luce dorata**")
+st.markdown(f"**⚡ LIVE** - Ultimo aggiornamento: {time.strftime('%H:%M:%S')} - Spirali: {len(st.session_state.sheet_data)}")
 
-# Informazioni tecniche
-st.markdown("---")
-st.markdown("### **⚙️ Informazioni Tecniche**")
-st.markdown(f"- **Ultimo aggiornamento**: {time.strftime('%H:%M:%S')}")
-st.markdown(f"- **Spirali totali**: {len(df)}")
-st.markmarkdown("- **Stato**: ⚡ LIVE - Aggiornamento automatico attivo")
-
-# Nota importante
-st.info("""
-**💡 Nota**: L'opera si aggiorna automaticamente ogni 30 secondi. 
-Le nuove spirale vengono visualizzate immediatamente con un effetto di esplosione di luce.
-""")
 
 
 
