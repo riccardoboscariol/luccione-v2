@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import json
 import time
+import colorsys
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide", initial_sidebar_state="collapsed")
@@ -34,8 +35,35 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    /* Checkbox style */
+    .stCheckbox > label {
+        color: white !important;
+        font-size: 18px !important;
+    }
     </style>
 """, unsafe_allow_html=True)
+
+# Funzione per desaturare i colori
+def fade_color(hex_color, fade_factor):
+    """Desatura un colore in base al fattore di fade (0-1)"""
+    try:
+        hex_color = hex_color.lstrip('#')
+        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        # Converti RGB a HSL
+        r, g, b = [x/255.0 for x in rgb]
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        
+        # Riduci la saturazione
+        s = max(0.3, s * (1 - fade_factor * 0.7))
+        
+        # Converti nuovamente a RGB
+        r, g, b = colorsys.hls_to_rgb(h, l, s)
+        
+        # Ritorna in HEX
+        return '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
+    except:
+        return hex_color  # Fallback al colore originale
 
 # Gestione della cache in session_state
 if 'sheet_data' not in st.session_state:
@@ -98,23 +126,44 @@ for idx, row in df.iterrows():
     scores = [row.get("PT", 3), row.get("Fantasy", 3), 
               row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
     media = np.mean(scores)
-    intensity = np.clip(media / 5, 0.2, 1.0)
+    
+    # 1. DIMENSIONE: spirali più grandi per punteggi più alti
+    size_factor = media / 5  # 0.2-1.0
+    intensity = np.clip(size_factor, 0.2, 1.0)
 
-    # Frequenza sfarfallio (0.5 - 3 Hz)
-    freq = 0.5 + (media / 5) * (3.0 - 0.5)
+    # 2. FREQUENZA: pulsazione più veloce per punteggi più alti
+    freq = 0.5 + size_factor * (3.0 - 0.5)
 
-    r = 0.3 + idx * 0.08
-    radius = r * (theta / max(theta)) * intensity * 4.5
-    color = palette[idx % len(palette)]
+    # 3. COLORE: basato sulla coerenza tra le 4 dimensioni
+    std_dev = np.std(scores)  # Deviazione standard tra le dimensioni
+    coherence = 1 - min(std_dev / 2, 1)  # 0-1, dove 1 = massima coerenza
+    
+    # Scegli il colore in base alla dimensione predominante
+    dominant_dim = np.argmax(scores)
+    base_color = palette[dominant_dim % len(palette)]
+    
+    # Modifica la saturazione in base alla coerenza
+    if coherence > 0.7:  # Alta coerenza
+        color = base_color  # Colore puro e saturo
+    else:  # Bassa coerenza
+        # Desatura il colore in base all'incoerenza
+        color = fade_color(base_color, 1 - coherence)
+
+    # 4. RAGGIO: dimensioni proporzionali al punteggio
+    r = 0.2 + size_factor * 0.3  # Base + proporzionale al punteggio
+    radius = r * (theta / max(theta)) * 5.0  # Moltiplicatore aumentato
 
     x = radius * np.cos(theta + idx)
     y = radius * np.sin(theta + idx)
 
-    # Inclinazione alternata
-    if idx % 2 == 0:
-        y_proj = y * 0.5 + x * 0.2
+    # 5. FORMA: inclinazione basata sul pattern di risposte
+    pattern_score = (scores[0] - scores[2]) + (scores[1] - scores[3])  # PT-EC + Fantasy-PD
+    if pattern_score > 1:
+        y_proj = y * 0.4 + x * 0.3  # Inclinazione marcata destra
+    elif pattern_score < -1:
+        y_proj = y * 0.4 - x * 0.3  # Inclinazione marcata sinistra
     else:
-        y_proj = y * 0.5 - x * 0.2
+        y_proj = y * 0.5  # Quasi verticale (bilanciato)
 
     spirali.append({
         "x": x.tolist(),
@@ -122,7 +171,9 @@ for idx, row in df.iterrows():
         "color": color,
         "intensity": float(intensity),
         "freq": float(freq),
-        "id": idx
+        "id": idx,
+        "size_factor": float(size_factor),
+        "coherence": float(coherence)
     })
 
 # 📏 Calcolo offset verticale per centratura perfetta
@@ -158,10 +209,73 @@ body {{
     top: 0;
     left: 0;
 }}
+.legend {{
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 15px;
+    border-radius: 10px;
+    z-index: 1000;
+    max-width: 300px;
+    border: 1px solid #333;
+}}
+.legend h3 {{
+    margin-top: 0;
+    color: #fff;
+    border-bottom: 1px solid #444;
+    padding-bottom: 8px;
+}}
+.legend-item {{
+    margin: 8px 0;
+    display: flex;
+    align-items: center;
+}}
+.color-dot {{
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    margin-right: 10px;
+    display: inline-block;
+}}
 </style>
 </head>
 <body>
 <div id="graph"></div>
+
+<div class="legend">
+    <h3>🎨 Legenda dell'Opera</h3>
+    <div class="legend-item">
+        <span class="color-dot" style="background: white"></span>
+        <span>Dimensione: Maggiore empatia → Spirale più grande</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: #e84393"></span>
+        <span>Perspective Taking</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: #e67e22"></span>
+        <span>Fantasy</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: #3498db"></span>
+        <span>Empathic Concern</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: #9b59b6"></span>
+        <span>Personal Distress</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: linear-gradient(to right, #e84393, #cccccc)"></span>
+        <span>Saturazione: Colori puri → Risposte coerenti</span>
+    </div>
+    <div class="legend-item">
+        <span class="color-dot" style="background: white; animation: pulse 1s infinite"></span>
+        <span>Pulsazione: Più veloce → Maggiore intensità</span>
+    </div>
+</div>
+
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
@@ -173,13 +287,20 @@ function buildTraces(time){{
         // Calcolo opacità variabile in base alla frequenza
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
+        // Aggiungi glow effect per spirali con alta coerenza
+        const glow = s.coherence > 0.8 ? 3 : 0;
+        
         for(let j=1; j < s.x.length; j += step){{
             const alpha = (0.2 + 0.7 * (j / s.x.length)) * flicker;
             traces.push({{
                 x: s.x.slice(j-1, j+1),
                 y: s.y.slice(j-1, j+1),
                 mode: "lines",
-                line: {{color: s.color, width: 1.5 + s.intensity * 3}},
+                line: {{
+                    color: s.color, 
+                    width: 1.5 + s.intensity * 3 + glow,
+                    shape: 'spline'
+                }},
                 opacity: Math.max(0, alpha),
                 hoverinfo: "none",
                 showlegend: false,
@@ -232,6 +353,48 @@ document.addEventListener('dblclick', function() {{
 # Mostra la visualizzazione a schermo intero
 st.components.v1.html(html_code, height=800, scrolling=False)
 
+# Checkbox per mostrare/nascondere l'analisi dati
+show_analysis = st.checkbox("📊 Mostra analisi dati collettivi", False, key="analysis_toggle")
+
+if show_analysis:
+    st.markdown("---")
+    st.subheader("Analisi Collettiva dell'Empatia")
+    
+    # Calcola statistiche
+    if not df.empty:
+        avg_scores = {{
+            "Perspective Taking": df["PT"].mean(),
+            "Fantasy": df["Fantasy"].mean(),
+            "Empathic Concern": df["Empathic Concern"].mean(),
+            "Personal Distress": df["Personal Distress"].mean()
+        }}
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("👥 Partecipanti Totali", len(df))
+            st.metric("💫 Empatia Media", f"{np.mean(list(avg_scores.values())):.2f}/5")
+            
+        with col2:
+            st.write("**📈 Medie per Dimensioni:**")
+            for dim, score in avg_scores.items():
+                st.write(f"{dim}: {score:.2f}/5")
+        
+        with col3:
+            st.write("**🎯 Interpretazione:**")
+            overall_avg = np.mean(list(avg_scores.values()))
+            if overall_avg > 4.0:
+                st.success("Alta empatia collettiva")
+            elif overall_avg > 3.0:
+                st.info("Empatia media collettiva")
+            else:
+                st.warning("Empatia bassa collettiva")
+        
+        # Visualizza distribuzione
+        st.bar_chart(avg_scores)
+    else:
+        st.info("Nessun dato disponibile per l'analisi")
+
 # Informazioni nascoste (visibili solo se si scorre)
 st.markdown("---")
 st.markdown("""
@@ -240,11 +403,6 @@ st.markdown("""
     <p>Scansiona il QR code per contribuire con la tua empatia</p>
 </div>
 """, unsafe_allow_html=True)
-
-
-
-
-
 
 
 
