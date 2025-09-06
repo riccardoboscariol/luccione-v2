@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import json
 from streamlit_autorefresh import st_autorefresh
+import time
 
 # 🔄 Auto-refresh ogni 10 secondi
 st_autorefresh(interval=10000, key="refresh")
@@ -47,6 +48,10 @@ if df.empty:
     st.warning("Nessuna risposta ancora.")
     st.stop()
 
+# 🆕 Identifica nuove risposte (ultimi 30 secondi)
+current_time = time.time()
+new_responses = []
+
 # 🎨 Genera dati spirali
 palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6"]
 theta = np.linspace(0, 12 * np.pi, 1200)
@@ -72,12 +77,20 @@ for idx, row in df.iterrows():
     else:
         y_proj = y * 0.5 - x * 0.2
 
+    # Determina se è una nuova risposta (simulato per dimostrazione)
+    # In una versione reale, dovresti avere un timestamp nel tuo dataset
+    is_new = idx == len(df) - 1  # L'ultima risposta è considerata nuova
+    if is_new:
+        new_responses.append(idx)
+
     spirali.append({
         "x": x.tolist(),
         "y": y_proj.tolist(),
         "color": color,
         "intensity": float(intensity),
-        "freq": float(freq)
+        "freq": float(freq),
+        "is_new": is_new,
+        "id": idx
     })
 
 # 📏 Calcolo offset verticale per centratura perfetta
@@ -88,9 +101,9 @@ OFFSET = -0.06 * y_range
 for s in spirali:
     s["y"] = (np.array(s["y"]) + OFFSET).tolist()
 
-data_json = json.dumps({"spirali": spirali})
+data_json = json.dumps({"spirali": spirali, "new_responses": new_responses})
 
-# 📊 HTML + JS con effetto sfarfallio
+# 📊 HTML + JS con effetto sfarfallio e evidenziazione nuove spirali
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -117,6 +130,15 @@ body {{ margin:0; background:black; overflow:hidden; }}
 :fullscreen {{
     cursor: none;
 }}
+@keyframes pulse {{
+    0% {{ opacity: 1; }}
+    50% {{ opacity: 0.5; }}
+    100% {{ opacity: 1; }}
+}}
+.new-spiral {{
+    animation: pulse 1s infinite;
+    filter: drop-shadow(0 0 5px #ffffff);
+}}
 </style>
 </head>
 <body>
@@ -125,6 +147,7 @@ body {{ margin:0; background:black; overflow:hidden; }}
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
+let newSpirals = DATA.new_responses;
 
 function buildTraces(time){{
     const traces = [];
@@ -132,13 +155,19 @@ function buildTraces(time){{
         const step = 4;
         // Calcolo opacità variabile in base alla frequenza
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
+        
+        // Evidenziazione per nuove spirali
+        const isNew = newSpirals.includes(s.id);
+        const extraWidth = isNew ? 3 : 0;
+        const extraOpacity = isNew ? 0.3 : 0;
+        
         for(let j=1; j < s.x.length; j += step){{
-            const alpha = (0.2 + 0.7 * (j / s.x.length)) * flicker;
+            const alpha = (0.2 + 0.7 * (j / s.x.length)) * flicker + extraOpacity;
             traces.push({{
                 x: s.x.slice(j-1, j+1),
                 y: s.y.slice(j-1, j+1),
                 mode: "lines",
-                line: {{color: s.color, width: 1.5 + s.intensity * 3}},
+                line: {{color: s.color, width: 1.5 + s.intensity * 3 + extraWidth}},
                 opacity: Math.max(0, alpha),
                 hoverinfo: "none",
                 showlegend: false,
@@ -165,6 +194,12 @@ function render(){{
         scrollZoom: false,
         responsive: true
     }});
+    
+    // Rimuovi l'evidenziazione dopo 10 secondi
+    if (time > 10 && newSpirals.length > 0) {{
+        newSpirals = [];
+    }}
+    
     requestAnimationFrame(render);
 }}
 
@@ -184,18 +219,18 @@ document.getElementById('fullscreen-btn').addEventListener('click', () => {{
 st.components.v1.html(html_code, height=800, scrolling=False)
 
 # ℹ️ Caption + descrizione
-st.caption("🎨 Premi ⛶ per il fullscreen totale. Ogni spirale sfarfalla a velocità proporzionale al punteggio medio del partecipante.")
+st.caption("🎨 Premi ⛶ per il fullscreen totale. Le nuove spirale si evidenziano con un effetto pulsante per i primi 10 secondi.")
 st.markdown("---")
 st.markdown("""
-### 🧭 *Empatia come consapevolezza dell’impatto*
+### 🧭 *Empatia come consapevolezza dell'impatto*
 
-> *“L’empatia non è solo sentire l’altro, ma riconoscere il proprio impatto sul mondo e sulla realtà condivisa. È un atto di presenza responsabile.”*
+> *"L'empatia non è solo sentire l'altro, ma riconoscere il proprio impatto sul mondo e sulla realtà condivisa. È un atto di presenza responsabile."*
 
 **Breve descrizione:**  
 Ogni spirale rappresenta un individuo.  
-L'inclinazione alternata e lo sfarfallio personalizzato creano un'opera viva, pulsante e ritmica.
+L'inclinazione alternata e lo sfarfallio personalizzato creano un'opera viva, pulsante e ritmica.  
+**Le nuove risposte si evidenziano con un effetto pulsante per i primi 10 secondi.**
 """)
-
 
 
 
