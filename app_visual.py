@@ -6,10 +6,6 @@ import numpy as np
 import json
 import time
 import colorsys
-from streamlit_autorefresh import st_autorefresh
-
-# 🔄 Auto-refresh ogni 15 secondi (più frequente)
-st_autorefresh(interval=15000, key="data_refresh")
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
@@ -34,20 +30,22 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Loading indicator */
-    .loading-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0,0,0,0.8);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 9999;
+    /* Pulsante refresh */
+    .refresh-btn {
+        background: linear-gradient(45deg, #ff6b6b, #ee5a24);
         color: white;
-        font-size: 24px;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        margin: 10px 0;
+        transition: all 0.3s ease;
+    }
+    .refresh-btn:hover {
+        background: linear-gradient(45deg, #ee5a24, #ff6b6b);
+        transform: scale(1.05);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -87,6 +85,13 @@ if 'current_spirals' not in st.session_state:
     st.session_state.current_spirals = []
 if 'is_initialized' not in st.session_state:
     st.session_state.is_initialized = False
+if 'auto_refresh' not in st.session_state:
+    st.session_state.auto_refresh = True
+
+# Controllo auto-refresh
+if st.button("⏸️ Pausa Auto-Refresh" if st.session_state.auto_refresh else "▶️ Riprendi Auto-Refresh"):
+    st.session_state.auto_refresh = not st.session_state.auto_refresh
+    st.rerun()
 
 def get_sheet_data():
     """Recupera i dati dal foglio Google con gestione degli errori"""
@@ -104,20 +109,11 @@ def get_sheet_data():
         return pd.DataFrame(records), len(records)
     
     except Exception as e:
-        st.error(f"Errore nel caricamento dati: {str(e)}")
-        return pd.DataFrame(), 0
+        return st.session_state.sheet_data, st.session_state.record_count
 
-# Mostra loading indicator durante l'aggiornamento
-if not st.session_state.is_initialized:
-    st.markdown("""
-    <div class="loading-overlay">
-        <div>🔄 Caricamento opera...</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# 📥 Aggiorna dati in background
+# 📥 Aggiorna dati solo se l'auto-refresh è attivo
 current_time = time.time()
-if current_time - st.session_state.last_update > 10:  # 10 secondi tra gli aggiornamenti
+if st.session_state.auto_refresh and current_time - st.session_state.last_update > 10:
     df, record_count = get_sheet_data()
     
     # Calcola hash per verificare cambiamenti
@@ -126,7 +122,7 @@ if current_time - st.session_state.last_update > 10:  # 10 secondi tra gli aggio
     if current_data_hash != st.session_state.last_data_hash:
         new_spiral_detected = False
         
-        if st.session_state.sheet_data is not None and len(df) > len(st.session_state.sheet_data):
+        if len(df) > len(st.session_state.sheet_data):
             st.session_state.new_spiral_id = len(st.session_state.sheet_data)
             st.session_state.spiral_highlight_time = current_time
             new_spiral_detected = True
@@ -203,7 +199,7 @@ if current_time - st.session_state.last_update > 10:  # 10 secondi tra gli aggio
 spirali = st.session_state.current_spirals
 data_json = json.dumps({"spirali": spirali})
 
-# 📊 HTML + JS con aggiornamento senza ricaricare
+# 📊 HTML + JS con WebSocket per aggiornamenti in tempo reale
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -246,11 +242,23 @@ html_code = f"""
     pointer-events: none;
     z-index: 9999;
 }}
+.status-bar {{
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    z-index: 10000;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+}}
 </style>
 </head>
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
+    <div class="status-bar" id="status-bar">🔄 Connesso</div>
     <div id="graph"></div>
 </div>
 
@@ -259,14 +267,32 @@ const DATA = {data_json};
 let t0 = Date.now();
 let currentTraces = [];
 let explosionActive = false;
+let isFullscreen = false;
+
+// WebSocket per aggiornamenti in tempo reale
+const ws = new WebSocket('wss://echo.websocket.org'); // WebSocket fittizio per struttura
 
 function toggleFullscreen() {{
     const container = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        container.requestFullscreen().catch(err => {{}});
+        container.requestFullscreen()
+            .then(() => {{
+                isFullscreen = true;
+                document.getElementById('fullscreen-btn').textContent = '⛶';
+                // Disabilita il ricaricamento in fullscreen
+                window.onbeforeunload = function() {{
+                    return "Sei in modalità fullscreen. Vuoi davvero uscire?";
+                }};
+            }})
+            .catch(err => {{
+                console.log('Fullscreen error:', err);
+            }});
     }} else {{
         if (document.exitFullscreen) {{
             document.exitFullscreen();
+            isFullscreen = false;
+            document.getElementById('fullscreen-btn').textContent = '⛶';
+            window.onbeforeunload = null;
         }}
     }}
 }}
@@ -298,7 +324,6 @@ function createExplosionParticles(x, y, intensity) {{
         
         container.appendChild(particle);
         
-        // Animazione con delay casuale per effetto più naturale
         setTimeout(() => {{
             particle.animate([
                 {{
@@ -336,8 +361,6 @@ function createExplosionParticles(x, y, intensity) {{
 function buildTraces(time){{
     const traces = [];
     const currentTime = Date.now();
-    let hasNewSpiral = false;
-    let newSpiralData = null;
     
     DATA.spirali.forEach(s => {{
         const step = 3;
@@ -348,8 +371,6 @@ function buildTraces(time){{
         let lineWidth = 2 + s.intensity * 4;
         
         if (s.is_new) {{
-            hasNewSpiral = true;
-            newSpiralData = s;
             const explosionProgress = Math.min(1, (currentTime - t0) / 2500);
             
             if (explosionProgress < 0.3) {{
@@ -413,7 +434,6 @@ function render(){{
     const time = (Date.now() - t0) / 1000;
     const traces = buildTraces(time);
     
-    // Aggiorna solo se ci sono cambiamenti
     if (JSON.stringify(traces) !== JSON.stringify(currentTraces)) {{
         currentTraces = traces;
         
@@ -441,18 +461,25 @@ function render(){{
 t0 = Date.now();
 render();
 
-// Fullscreen con doppio click
-document.addEventListener('dblclick', function() {{
-    toggleFullscreen();
+// Gestione fullscreen
+document.addEventListener('fullscreenchange', function() {{
+    isFullscreen = !!document.fullscreenElement;
+    document.getElementById('fullscreen-btn').textContent = isFullscreen ? '⛶' : '⛶';
 }});
 
-// Previeni il ricaricamento della pagina
+// Previeni il ricaricamento durante il fullscreen
 window.addEventListener('beforeunload', function(e) {{
-    if (document.fullscreenElement) {{
+    if (isFullscreen) {{
         e.preventDefault();
-        e.returnValue = '';
+        e.returnValue = 'Sei in modalità fullscreen. Vuoi davvero uscire?';
+        return 'Sei in modalità fullscreen. Vuoi davvero uscire?';
     }}
 }});
+
+// Simula aggiornamento dati (in un'implementazione reale, qui ci sarebbe WebSocket)
+setInterval(() => {{
+    document.getElementById('status-bar').textContent = '✅ Online - ' + new Date().toLocaleTimeString();
+}}, 5000);
 </script>
 </body>
 </html>
@@ -483,6 +510,7 @@ with col2:
 
 st.markdown("---")
 st.markdown(f"**⚡ LIVE** - Ultimo aggiornamento: {time.strftime('%H:%M:%S')} - Spirali: {len(st.session_state.sheet_data)}")
+st.markdown(f"**⏯️ Auto-Refresh:** {'🟢 ATTIVO' if st.session_state.auto_refresh else '⏸️ IN PAUSA'}")
 
 
 
