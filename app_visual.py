@@ -8,7 +8,7 @@ import time
 import colorsys
 
 # 🖥 Configurazione Streamlit
-st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
 st.markdown("""
     <style>
     html, body, [class*="css"] {
@@ -17,28 +17,113 @@ st.markdown("""
         height: 100%;
         width: 100%;
         background-color: black;
-        overflow: hidden;
     }
     .block-container {
-        padding: 0 !important;
+        padding: 2rem !important;
         max-width: 100% !important;
     }
     .stApp {
-        overflow: hidden;
+        background: black;
     }
     iframe {
-        height: 100vh !important;
-        width: 100vw !important;
+        height: 70vh !important;
+        width: 100% !important;
         border: none;
+        border-radius: 15px;
     }
-    /* Nascondi tutto tranne la visualizzazione */
+    /* Nascondi elementi non necessari */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    /* Checkbox style */
-    .stCheckbox > label {
-        color: white !important;
-        font-size: 18px !important;
+    
+    /* Legenda style */
+    .legend-container {
+        background: rgba(0,0,0,0.9) !important;
+        padding: 25px;
+        border-radius: 15px;
+        border: 2px solid #333;
+        margin: 20px 0;
+        color: white;
+    }
+    .legend-title {
+        color: #ffeb3b;
+        font-size: 28px;
+        margin-bottom: 20px;
+        text-align: center;
+        font-weight: bold;
+    }
+    .legend-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 25px;
+    }
+    .legend-item {
+        display: flex;
+        align-items: center;
+        padding: 12px;
+        background: rgba(255,255,255,0.1);
+        border-radius: 10px;
+        border-left: 4px solid;
+    }
+    .color-dot {
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        margin-right: 15px;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+    .legend-text {
+        font-size: 16px;
+        line-height: 1.4;
+    }
+    
+    /* Fullscreen button */
+    .fullscreen-btn {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        z-index: 10000;
+        background: rgba(255,255,255,0.3);
+        color: white;
+        border: none;
+        padding: 12px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 24px;
+        backdrop-filter: blur(5px);
+    }
+    .fullscreen-btn:hover {
+        background: rgba(255,255,255,0.5);
+    }
+    
+    /* Animation for explosion */
+    @keyframes lightExplosion {
+        0% { 
+            transform: scale(0.5);
+            opacity: 0;
+            filter: brightness(20) blur(20px);
+        }
+        20% { 
+            transform: scale(1.5);
+            opacity: 1;
+            filter: brightness(10) blur(10px);
+        }
+        50% { 
+            transform: scale(2);
+            opacity: 0.8;
+            filter: brightness(5) blur(5px);
+        }
+        100% { 
+            transform: scale(1);
+            opacity: 1;
+            filter: brightness(1) blur(0px);
+        }
+    }
+    
+    .exploding {
+        animation: lightExplosion 2s ease-out;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -116,6 +201,7 @@ if current_time - st.session_state.last_update > 300:
         st.session_state.new_spiral_id = len(st.session_state.sheet_data)
         st.session_state.spiral_highlight_time = current_time
         new_spiral_detected = True
+        st.toast("✨ Nuova spirale aggiunta all'opera!", icon="🎨")
     
     st.session_state.sheet_data = df
     st.session_state.record_count = record_count
@@ -177,7 +263,8 @@ for idx, row in df.iterrows():
         "freq": float(freq),
         "id": idx,
         "is_new": is_new,
-        "base_color": base_color
+        "base_color": base_color,
+        "media": float(media)
     })
 
 # 📏 Calcolo offset verticale
@@ -191,32 +278,29 @@ if spirali:
 
 data_json = json.dumps({"spirali": spirali})
 
-# 📊 HTML + JS con effetto esplosione di luce
+# 📊 HTML + JS con effetto esplosione di luce MIGLIORATO
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-body {{ 
-    margin: 0; 
-    padding: 0; 
-    background: black; 
+#graph-container {{
+    position: relative;
+    width: 100%;
+    height: 70vh;
+    background: black;
+    border-radius: 15px;
     overflow: hidden;
-    width: 100vw;
-    height: 100vh;
 }}
 #graph {{ 
-    width: 100vw; 
-    height: 100vh; 
-    position: fixed;
-    top: 0;
-    left: 0;
+    width: 100%;
+    height: 100%;
 }}
 #fullscreen-btn {{
-    position: fixed;
-    top: 20px;
-    right: 20px;
+    position: absolute;
+    top: 15px;
+    right: 15px;
     z-index: 10000;
     background: rgba(255,255,255,0.3);
     color: white;
@@ -230,105 +314,85 @@ body {{
 #fullscreen-btn:hover {{
     background: rgba(255,255,255,0.5);
 }}
-.legend {{
-    position: fixed;
-    bottom: 20px;
-    left: 20px;
-    background: rgba(0,0,0,0.85);
-    color: white;
-    padding: 15px;
-    border-radius: 12px;
-    z-index: 1000;
-    max-width: 320px;
-    border: 1px solid #444;
-}}
-.legend h3 {{
-    margin-top: 0;
-    color: #fff;
-    border-bottom: 2px solid #666;
-    padding-bottom: 10px;
-    margin-bottom: 12px;
-}}
-.legend-item {{
-    margin: 10px 0;
-    display: flex;
-    align-items: center;
-    font-size: 14px;
-}}
-.color-dot {{
-    width: 18px;
-    height: 18px;
+.explosion-particle {{
+    position: absolute;
+    background: radial-gradient(circle, #ffeb3b 0%, transparent 70%);
     border-radius: 50%;
-    margin-right: 12px;
-    display: inline-block;
-    flex-shrink: 0;
-}}
-@keyframes lightExplosion {{
-    0% {{ 
-        filter: brightness(1) drop-shadow(0 0 0px rgba(255,255,255,0));
-        opacity: 1;
-    }}
-    50% {{ 
-        filter: brightness(5) drop-shadow(0 0 30px gold) drop-shadow(0 0 60px white);
-        opacity: 1;
-    }}
-    100% {{ 
-        filter: brightness(1) drop-shadow(0 0 0px rgba(255,255,255,0));
-        opacity: 1;
-    }}
-}}
-.exploding {{
-    animation: lightExplosion 2s ease-out;
+    pointer-events: none;
+    z-index: 9999;
 }}
 </style>
 </head>
 <body>
-<button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-<div id="graph"></div>
-
-<div class="legend">
-    <h3>🎨 Legenda dell'Opera</h3>
-    <div class="legend-item">
-        <span class="color-dot" style="background: white"></span>
-        <span><strong>Dimensione:</strong> Maggiore empatia → Spirale più grande</span>
-    </div>
-    <div class="legend-item">
-        <span class="color-dot" style="background: #e84393"></span>
-        <span>Perspective Taking</span>
-    </div>
-    <div class="legend-item">
-        <span class="color-dot" style="background: #e67e22"></span>
-        <span>Fantasy</span>
-    </div>
-    <div class="legend-item">
-        <span class="color-dot" style="background: #3498db"></span>
-        <span>Empathic Concern</span>
-    </div>
-    <div class="legend-item">
-        <span class="color-dot" style="background: #9b59b6"></span>
-        <span>Personal Distress</span>
-    </div>
-    <div class="legend-item">
-        <span class="color-dot" style="background: gold; animation: lightExplosion 2s infinite"></span>
-        <span><strong>Esplosione di luce:</strong> Nuova spirale appena aggiunta!</span>
-    </div>
+<div id="graph-container">
+    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
+    <div id="graph"></div>
 </div>
 
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
-let lastRenderTime = 0;
-const explosionDuration = 2000; // 2 secondi
+let explosionParticles = [];
 
 function toggleFullscreen() {{
+    const container = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        document.documentElement.requestFullscreen().catch(err => {{
+        container.requestFullscreen().catch(err => {{
             console.log('Fullscreen error:', err);
         }});
     }} else {{
         if (document.exitFullscreen) {{
             document.exitFullscreen();
         }}
+    }}
+}}
+
+function createExplosionParticles(x, y, color, intensity) {{
+    const container = document.getElementById('graph-container');
+    const particleCount = 30 + intensity * 50;
+    
+    for (let i = 0; i < particleCount; i++) {{
+        const particle = document.createElement('div');
+        particle.className = 'explosion-particle';
+        
+        const size = 5 + Math.random() * 15 * intensity;
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 50 + Math.random() * 150 * intensity;
+        const duration = 800 + Math.random() * 1200;
+        
+        particle.style.width = size + 'px';
+        particle.style.height = size + 'px';
+        particle.style.left = (x - size/2) + 'px';
+        particle.style.top = (y - size/2) + 'px';
+        particle.style.background = `radial-gradient(circle, ${{color}} 0%, transparent 70%)`;
+        particle.style.opacity = '0.9';
+        particle.style.transform = 'scale(0)';
+        
+        container.appendChild(particle);
+        
+        // Animazione particella
+        particle.animate([
+            {{
+                transform: 'scale(0) translate(0, 0)',
+                opacity: 0.9,
+                filter: 'blur(0px) brightness(3)'
+            }},
+            {{
+                transform: `scale(3) translate(${{Math.cos(angle) * distance}}px, ${{Math.sin(angle) * distance}}px)`,
+                opacity: 0,
+                filter: 'blur(10px) brightness(1)'
+            }}
+        ], {{
+            duration: duration,
+            easing: 'cubic-bezier(0.2, 0, 0.8, 1)'
+        }});
+        
+        // Rimuovi particella dopo l'animazione
+        setTimeout(() => {{
+            if (particle.parentNode) {{
+                particle.parentNode.removeChild(particle);
+            }}
+        }}, duration);
     }}
 }}
 
@@ -342,13 +406,47 @@ function buildTraces(time){{
         
         let explosionEffect = 0;
         let glowColor = s.color;
+        let lineWidth = 2 + s.intensity * 4;
         
         if (s.is_new) {{
-            const explosionProgress = Math.min(1, (currentTime - t0) / explosionDuration);
-            if (explosionProgress < 1) {{
-                // Effetto esplosione di luce
-                explosionEffect = 15 * (1 - Math.pow(explosionProgress - 1, 2));
-                glowColor = '#ffffff'; // Bianco puro durante l'esplosione
+            const explosionProgress = Math.min(1, (currentTime - t0) / 2000);
+            
+            // Effetto esplosione MIGLIORATO
+            if (explosionProgress < 0.2) {{
+                // Fase 1: Luce bianca accecante
+                glowColor = '#ffffff';
+                explosionEffect = 20 * (1 - explosionProgress/0.2);
+                lineWidth += explosionEffect;
+                
+                // Crea particelle al centro della spirale
+                if (explosionProgress < 0.05) {{
+                    const centerX = (Math.max(...s.x) + Math.min(...s.x)) / 2;
+                    const centerY = (Math.max(...s.y) + Math.min(...s.y)) / 2;
+                    createExplosionParticles(centerX, centerY, '#ffeb3b', s.intensity);
+                }}
+                
+            }} else if (explosionProgress < 0.5) {{
+                // Fase 2: Transizione all'oro
+                const goldProgress = (explosionProgress - 0.2) / 0.3;
+                glowColor = goldProgress < 0.5 ? '#ffffff' : '#ffeb3b';
+                explosionEffect = 10 * (1 - goldProgress);
+                lineWidth += explosionEffect;
+                
+            }} else if (explosionProgress < 0.8) {{
+                // Fase 3: Transizione al colore originale
+                const colorProgress = (explosionProgress - 0.5) / 0.3;
+                const r = Math.floor(255 * colorProgress + 255 * (1-colorProgress));
+                const g = Math.floor(235 * colorProgress + 255 * (1-colorProgress));
+                const b = Math.floor(59 * colorProgress + 255 * (1-colorProgress));
+                glowColor = `rgb(${{r}}, ${{g}}, ${{b}})`;
+                explosionEffect = 5 * (1 - colorProgress);
+                lineWidth += explosionEffect;
+                
+            }} else {{
+                // Fase 4: Ritorno alla normalità
+                glowColor = s.color;
+                explosionEffect = 2 * (1 - (explosionProgress-0.8)/0.2);
+                lineWidth += explosionEffect;
             }}
         }}
         
@@ -362,7 +460,7 @@ function buildTraces(time){{
                 mode: "lines",
                 line: {{
                     color: glowColor, 
-                    width: 2 + s.intensity * 4 + explosionEffect,
+                    width: lineWidth,
                     shape: 'spline'
                 }},
                 opacity: Math.max(0.1, alpha),
@@ -370,30 +468,6 @@ function buildTraces(time){{
                 showlegend: false,
                 type: "scatter"
             }});
-            
-            // Aggiungi particelle di luce durante l'esplosione
-            if (s.is_new && explosionEffect > 0 && j % 20 === 0) {{
-                const particleSize = 8 + Math.random() * 12;
-                const particleX = s.x[j];
-                const particleY = s.y[j];
-                
-                traces.push({{
-                    x: [particleX],
-                    y: [particleY],
-                    mode: "markers",
-                    marker: {{
-                        color: '#ffffff',
-                        size: particleSize,
-                        opacity: 0.8 * (1 - explosionProgress),
-                        line: {{
-                            color: '#ffeb3b',
-                            width: 2
-                        }}
-                    }},
-                    hoverinfo: "none",
-                    showlegend: false
-                }});
-            }}
         }}
     }});
     return traces;
@@ -421,6 +495,7 @@ function render(){{
 }}
 
 // Inizia il rendering
+t0 = Date.now();
 render();
 
 // Fullscreen con doppio click
@@ -430,10 +505,11 @@ document.addEventListener('dblclick', function() {{
 
 // Ascolta cambiamenti fullscreen
 document.addEventListener('fullscreenchange', function() {{
+    const btn = document.getElementById('fullscreen-btn');
     if (document.fullscreenElement) {{
-        document.getElementById('fullscreen-btn').textContent = '⛶';
+        btn.textContent = '⛶';
     }} else {{
-        document.getElementById('fullscreen-btn').textContent = '⛶';
+        btn.textContent = '⛶';
     }}
 }});
 </script>
@@ -441,19 +517,93 @@ document.addEventListener('fullscreenchange', function() {{
 </html>
 """
 
-# Mostra la visualizzazione
-st.components.v1.html(html_code, height=800, scrolling=False)
-
-# Informazioni
-st.markdown("---")
+# LEGENDA ESTERNA all'opera
 st.markdown("""
-<div style='color: white; text-align: center; padding: 15px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 10px;'>
-    <h3>✨ Opera "Specchio Empatico"</h3>
-    <p>Ogni nuova partecipazione crea un'esplosione di luce dorata</p>
-    <p>Click sul pulsante ⛶ o doppio click per schermo intero</p>
+<div class="legend-container">
+    <div class="legend-title">🎨 LEGENDA DELL'OPERA "SPECCHIO EMPATICO"</div>
+    
+    <div class="legend-grid">
+        <div class="legend-item" style="border-left-color: #e84393;">
+            <span class="color-dot" style="background: #e84393"></span>
+            <div class="legend-text">
+                <strong>Perspective Taking</strong><br>
+                Capacità di mettersi nei panni altrui
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: #e67e22;">
+            <span class="color-dot" style="background: #e67e22"></span>
+            <div class="legend-text">
+                <strong>Fantasy</strong><br>
+                Identificazione con personaggi e storie
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: #3498db;">
+            <span class="color-dot" style="background: #3498db"></span>
+            <div class="legend-text">
+                <strong>Empathic Concern</strong><br>
+                Compassione e preoccupazione per gli altri
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: #9b59b6;">
+            <span class="color-dot" style="background: #9b59b6"></span>
+            <div class="legend-text">
+                <strong>Personal Distress</strong><br>
+                Disagio emotivo di fronte alla sofferenza
+            </div>
+        </div>
+    </div>
+    
+    <div class="legend-grid">
+        <div class="legend-item" style="border-left-color: white;">
+            <span class="color-dot" style="background: white"></span>
+            <div class="legend-text">
+                <strong>Dimensione della Spirale</strong><br>
+                Maggiore è l'empatia, più grande è la spirale
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: gold;">
+            <span class="color-dot" style="background: gold; animation: lightExplosion 2s infinite"></span>
+            <div class="legend-text">
+                <strong>Nuova Spirale</strong><br>
+                Esplosione di luce dorata per ogni nuovo contributo
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: #ff6666;">
+            <span class="color-dot" style="background: linear-gradient(to right, #e84393, #cccccc)"></span>
+            <div class="legend-text">
+                <strong>Coerenza</strong><br>
+                Colori puri = risposte coerenti tra le dimensioni
+            </div>
+        </div>
+        
+        <div class="legend-item" style="border-left-color: #66ff66;">
+            <span class="color-dot" style="background: white; animation: pulse 1s infinite"></span>
+            <div class="legend-text">
+                <strong>Pulsazione</strong><br>
+                Più veloce = maggiore intensità emotiva
+            </div>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
+# Mostra la visualizzazione
+st.components.v1.html(html_code, height=700, scrolling=False)
+
+# Informazioni aggiuntive
+st.markdown("""
+<div style='color: white; text-align: center; padding: 20px; background: rgba(0,0,0,0.8); border-radius: 15px; margin: 20px 0;'>
+    <h3 style='color: #ffeb3b;'>✨ COME FUNZIONA L'OPERA</h3>
+    <p>Ogni partecipante che compila il questionario aggiunge una nuova spirale</p>
+    <p>Le nuove spirale appaiono con una spettacolare <strong>esplosione di luce dorata</strong></p>
+    <p>Click sul pulsante ⛶ o doppio click sull'opera per schermo intero</p>
+</div>
+""", unsafe_allow_html=True)
 
 
 
