@@ -20,10 +20,32 @@ st.markdown("""
     }
     .block-container {
         padding: 0 !important;
+        max-width: 100% !important;
+    }
+    .stApp {
+        overflow: hidden;
     }
     iframe {
         height: 100vh !important;
         width: 100vw !important;
+        border: none;
+    }
+    /* Stile per il pulsante fullscreen */
+    .fullscreen-btn {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(255,255,255,0.2);
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 20px;
+    }
+    .fullscreen-btn:hover {
+        background: rgba(255,255,255,0.4);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -155,25 +177,36 @@ html_code = f"""
 <head>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-body {{ margin:0; background:black; overflow:hidden; }}
-#graph {{ width:100vw; height:100vh; position:relative; }}
+body {{ 
+    margin: 0; 
+    padding: 0; 
+    background: black; 
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+}}
+#graph {{ 
+    width: 100vw; 
+    height: 100vh; 
+    position: fixed;
+    top: 0;
+    left: 0;
+}}
 #fullscreen-btn {{
-    position: absolute;
-    top: 10px; right: 10px;
-    z-index: 9999;
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
     background: rgba(255,255,255,0.2);
     color: white;
     border: none;
-    padding: 6px 10px;
+    padding: 10px 15px;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 18px;
+    font-size: 20px;
 }}
 #fullscreen-btn:hover {{
     background: rgba(255,255,255,0.4);
-}}
-:fullscreen {{
-    cursor: none;
 }}
 @keyframes pulse {{
     0% {{ opacity: 1; }}
@@ -187,12 +220,32 @@ body {{ margin:0; background:black; overflow:hidden; }}
 </style>
 </head>
 <body>
-<button id="fullscreen-btn">⛶</button>
+<button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
 <div id="graph"></div>
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
 let newSpirals = DATA.new_responses;
+let isFullscreen = false;
+
+function toggleFullscreen() {{
+    if (!document.fullscreenElement) {{
+        document.documentElement.requestFullscreen().catch(err => {{
+            console.log('Error attempting to enable fullscreen:', err);
+        }});
+        isFullscreen = true;
+    }} else {{
+        if (document.exitFullscreen) {{
+            document.exitFullscreen();
+            isFullscreen = false;
+        }}
+    }}
+}}
+
+// Gestione cambio fullscreen
+document.addEventListener('fullscreenchange', () => {{
+    isFullscreen = !!document.fullscreenElement;
+}});
 
 function buildTraces(time){{
     const traces = [];
@@ -237,7 +290,8 @@ function render(){{
     Plotly.react('graph', traces, layout, {{
         displayModeBar: false,
         scrollZoom: false,
-        responsive: true
+        responsive: true,
+        staticPlot: false
     }});
     
     // Rimuovi l'evidenziazione dopo 15 secondi
@@ -248,20 +302,22 @@ function render(){{
     requestAnimationFrame(render);
 }}
 
+// Inizia il rendering
 render();
-
-document.getElementById('fullscreen-btn').addEventListener('click', () => {{
-    const graphDiv = document.getElementById('graph');
-    if (graphDiv.requestFullscreen) graphDiv.requestFullscreen();
-    else if (graphDiv.webkitRequestFullscreen) graphDiv.webkitRequestFullscreen();
-    else if (graphDiv.msRequestFullscreen) graphDiv.msRequestFullscreen();
-}});
 </script>
 </body>
 </html>
 """
 
-st.components.v1.html(html_code, height=800, scrolling=False)
+# Pulsante esterno per fullscreen (backup)
+st.markdown("""
+<div style="position: fixed; top: 20px; right: 20px; z-index: 1000;">
+    <button class="fullscreen-btn" onclick="document.documentElement.requestFullscreen()">⛶</button>
+</div>
+""", unsafe_allow_html=True)
+
+# Mostra la visualizzazione
+st.components.v1.html(html_code, height=700, scrolling=False)
 
 # ℹ️ Informazioni sullo stato
 last_update_time = time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))
@@ -289,6 +345,30 @@ L'inclinazione alternata e lo sfarfallio personalizzato creano un'opera viva, pu
 **Nota:** I dati si aggiornano automaticamente ogni 5 minuti per rispettare i limiti delle API Google.
 """)
 
+# JavaScript aggiuntivo per gestire il fullscreen
+st.markdown("""
+<script>
+// Funzione per il fullscreen
+function enterFullscreen() {{
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {{
+        elem.requestFullscreen();
+    }} else if (elem.webkitRequestFullscreen) {{
+        elem.webkitRequestFullscreen();
+    }} else if (elem.msRequestFullscreen) {{
+        elem.msRequestFullscreen();
+    }}
+}}
+
+// Aggiungi listener per il pulsante esterno
+document.addEventListener('DOMContentLoaded', function() {{
+    const buttons = document.querySelectorAll('.fullscreen-btn');
+    buttons.forEach(button => {{
+        button.addEventListener('click', enterFullscreen);
+    }});
+}});
+</script>
+""", unsafe_allow_html=True)
 
 
 
