@@ -92,7 +92,7 @@ if current_data_hash != st.session_state.last_data_hash:
 
 # Genera le spirali
 palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-theta = np.linspace(0, 10 * np.pi, 800)  # Ridotto per performance
+theta = np.linspace(0, 10 * np.pi, 800)
 spirali = []
 
 for idx, row in df.iterrows():
@@ -132,7 +132,6 @@ for idx, row in df.iterrows():
     else: 
         y_proj = y * 0.6
 
-    # Determina se è una nuova spirale (entro 10 secondi)
     is_new = (new_spiral_detected and idx >= len(st.session_state.sheet_data) - (len(df) - len(st.session_state.sheet_data)) and 
               time.time() - st.session_state.new_spiral_time < 10)
 
@@ -154,7 +153,7 @@ if spirali:
 st.session_state.current_spirals = spirali
 data_json = json.dumps({"spirali": spirali})
 
-# 📊 HTML + JS - SOLUZIONE DEFINITIVA
+# 📊 HTML + JS con immagine in basso a destra
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -200,12 +199,48 @@ html_code = f"""
     border-radius: 6px;
     font-size: 12px;
 }}
+#logo {{
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    z-index: 10000;
+    width: 80px;
+    height: 80px;
+    border-radius: 10px;
+    border: 2px solid rgba(255,255,255,0.3);
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    transition: all 0.3s ease;
+    opacity: 0.9;
+}}
+#logo:hover {{
+    transform: scale(1.1);
+    opacity: 1;
+    box-shadow: 0 0 30px rgba(255,255,255,0.2);
+}}
+/* Responsive per schermi piccoli */
+@media (max-width: 768px) {{
+    #logo {{
+        width: 60px;
+        height: 60px;
+        bottom: 10px;
+        right: 10px;
+    }}
+}}
+/* Stile per fullscreen */
+:fullscreen #logo {{
+    width: 100px;
+    height: 100px;
+    bottom: 20px;
+    right: 20px;
+}}
 </style>
 </head>
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <div id="status">Spirali: {len(df)} | Ultimo agg: {time.strftime('%H:%M:%S')}</div>
+    <img id="logo" src="https://raw.githubusercontent.com/tuousername/nomerepo/main/frame.png" 
+         alt="Frame" title="Specchio Empatico">
     <div id="graph"></div>
 </div>
 
@@ -230,6 +265,9 @@ function toggleFullscreen() {{
             .then(() => {{
                 isFullscreen = true;
                 localStorage.setItem('wasFullscreen', 'true');
+                // Aggiorna dimensione logo in fullscreen
+                document.getElementById('logo').style.width = '100px';
+                document.getElementById('logo').style.height = '100px';
             }})
             .catch(err => {{}});
     }} else {{
@@ -237,6 +275,9 @@ function toggleFullscreen() {{
             document.exitFullscreen();
             isFullscreen = false;
             localStorage.setItem('wasFullscreen', 'false');
+            // Ripristina dimensione logo
+            document.getElementById('logo').style.width = '80px';
+            document.getElementById('logo').style.height = '80px';
         }}
     }}
 }}
@@ -253,22 +294,20 @@ function buildTraces(time){{
         let glowColor = s.color;
         let lineWidth = 2 + s.intensity * 4;
         
-        // EFFETTO NUOVA SPIRALE - MOLTO EVIDENTE
+        // EFFETTO NUOVA SPIRALE
         if (s.is_new) {{
             const pulseTime = (currentTime - t0) / 1000;
-            const pulseSpeed = 15; // Velocissimo
+            const pulseSpeed = 15;
             
-            // Pulsazione ultra-rapida
             pulseEffect = 10 * Math.sin(pulseTime * pulseSpeed * Math.PI * 2);
             lineWidth += Math.abs(pulseEffect) * 2;
             
-            // Cambio colore drammatico
             const pulsePhase = Math.sin(pulseTime * pulseSpeed * Math.PI);
             if (pulsePhase > 0.8) {{
-                glowColor = '#FFFFFF'; // BIANCO PURissimo
+                glowColor = '#FFFFFF';
                 lineWidth += 15;
             }} else if (pulsePhase > 0.4) {{
-                glowColor = '#FFD700'; // ORO
+                glowColor = '#FFD700';
                 lineWidth += 10;
             }} else {{
                 glowColor = s.color;
@@ -331,15 +370,28 @@ render();
 document.addEventListener('fullscreenchange', () => {{
     isFullscreen = !!document.fullscreenElement;
     localStorage.setItem('wasFullscreen', isFullscreen.toString());
+    
+    // Aggiorna dimensione logo in base allo stato fullscreen
+    const logo = document.getElementById('logo');
+    if (isFullscreen) {{
+        logo.style.width = '100px';
+        logo.style.height = '100px';
+    }} else {{
+        logo.style.width = '80px';
+        logo.style.height = '80px';
+    }}
 }});
 
-// Polling per nuovi dati (simula WebSocket)
+// Polling per nuovi dati
 setInterval(() => {{
-    // Questo sarebbe dove riceveresti nuovi dati via WebSocket
-    // Per ora aggiorniamo solo l'orario
     document.getElementById('status').textContent = 
         `Spirali: {len(df)} | Ultimo agg: ${{new Date().toLocaleTimeString()}}`;
 }}, 5000);
+
+// Gestione errori immagine
+document.getElementById('logo').addEventListener('error', function() {{
+    this.style.display = 'none'; // Nascondi se l'immagine non viene caricata
+}});
 </script>
 </body>
 </html>
@@ -369,18 +421,16 @@ with col2:
     st.markdown("- ⏱️ Durata: 10 secondi")
 
 st.markdown("---")
-st.markdown("**⚡ ISTRUZIONI IMPORTANTI:**")
-st.markdown("1. **Compila il questionario** normalmente")
-st.markdown("2. **Clicca 'Aggiorna Manualmente'** dopo aver inviato")
-st.markdown("3. **Il fullscreen viene mantenuto** automaticamente")
-st.markdown("4. **Le nuove spirale pulsano** in bianco/oro")
+st.markdown("**📍 Logo in basso a destra**")
+st.markdown("- Immagine: `frame.png` da GitHub")
+st.markdown("- Dimensioni: 80px (100px in fullscreen)")
+st.markdown("- Posizione: Fisso in basso a destra")
+st.markdown("- Effetto hover: Leggero ingrandimento")
 
 st.info("""
-**Nota:** L'aggiornamento è manuale per evitare il refresh della pagina. 
-Clicca il pulsante dopo aver inviato un nuovo questionario per vedere la spirale.
+**Nota:** L'immagine viene caricata direttamente da GitHub. 
+Assicurati che il percorso sia corretto: `https://raw.githubusercontent.com/tuousername/nomerepo/main/frame.png`
 """)
-
-
 
 
 
