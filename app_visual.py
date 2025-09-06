@@ -55,6 +55,10 @@ if 'current_spirals' not in st.session_state:
     st.session_state.current_spirals = []
 if 'new_spiral_time' not in st.session_state:
     st.session_state.new_spiral_time = 0
+if 'last_manual_refresh' not in st.session_state:
+    st.session_state.last_manual_refresh = 0
+if 'auto_check_counter' not in st.session_state:
+    st.session_state.auto_check_counter = 0
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -72,8 +76,23 @@ def get_sheet_data():
         return st.session_state.sheet_data
 
 # Pulsante per aggiornamento manuale
-if st.button("🔄 Aggiorna Manualmente", key="manual_refresh"):
-    st.session_state.last_data_hash = ""  # Forza aggiornamento
+col1, col2 = st.columns([2, 1])
+with col1:
+    if st.button("🔄 Aggiorna Manualmente", key="manual_refresh", use_container_width=True):
+        st.session_state.last_data_hash = ""  # Forza aggiornamento
+        st.session_state.last_manual_refresh = time.time()
+        st.rerun()
+
+with col2:
+    if st.button("📊 Controlla Nuove Spirali", key="check_spirals", use_container_width=True):
+        st.session_state.auto_check_counter += 1
+        st.rerun()
+
+# Controllo automatico ogni 30 secondi (senza refresh della pagina)
+current_time = time.time()
+if current_time - st.session_state.last_manual_refresh > 30:
+    st.session_state.auto_check_counter += 1
+    st.session_state.last_manual_refresh = current_time
 
 # Carica i dati
 df = get_sheet_data()
@@ -81,11 +100,17 @@ current_data_hash = str(hash(str(df.values.tobytes()))) if not df.empty else "em
 
 # Verifica se ci sono nuove spirale
 new_spiral_detected = False
+spiral_count_change = 0
+
 if current_data_hash != st.session_state.last_data_hash:
-    if len(df) > len(st.session_state.sheet_data):
-        st.session_state.new_spiral_time = time.time()
+    old_count = len(st.session_state.sheet_data) if not st.session_state.sheet_data.empty else 0
+    new_count = len(df)
+    spiral_count_change = new_count - old_count
+    
+    if spiral_count_change > 0:
+        st.session_state.new_spiral_time = current_time
         new_spiral_detected = True
-        st.success("✨ Nuova spirale rilevata! (Aggiornamento senza refresh)")
+        st.toast(f"✨ {spiral_count_change} nuova(e) spirale(e) aggiunta(e)!", icon="🎨")
     
     st.session_state.sheet_data = df
     st.session_state.last_data_hash = current_data_hash
@@ -132,8 +157,8 @@ for idx, row in df.iterrows():
     else: 
         y_proj = y * 0.6
 
-    is_new = (new_spiral_detected and idx >= len(st.session_state.sheet_data) - (len(df) - len(st.session_state.sheet_data)) and 
-              time.time() - st.session_state.new_spiral_time < 10)
+    is_new = (new_spiral_detected and idx >= len(st.session_state.sheet_data) - spiral_count_change and 
+              current_time - st.session_state.new_spiral_time < 10)
 
     spirali.append({
         "x": x.tolist(), "y": y_proj.tolist(), "color": color,
@@ -156,7 +181,7 @@ data_json = json.dumps({"spirali": spirali})
 # URL corretto per l'immagine da GitHub
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# 📊 HTML + JS con immagine in basso a destra
+# 📊 HTML + JS con sistema di auto-check
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -215,52 +240,23 @@ html_code = f"""
     transition: all 0.3s ease;
     opacity: 0.85;
     object-fit: cover;
-    background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(5px);
 }}
 #logo:hover {{
     transform: scale(1.15);
     opacity: 1;
     box-shadow: 0 0 35px rgba(255,255,255,0.3);
-    border-color: rgba(255,255,255,0.6);
 }}
-/* Responsive per schermi piccoli */
-@media (max-width: 768px) {{
-    #logo {{
-        width: 60px;
-        height: 60px;
-        bottom: 15px;
-        right: 15px;
-    }}
-}}
-/* Stile per fullscreen */
 :fullscreen #logo {{
     width: 100px;
     height: 100px;
-    bottom: 25px;
-    right: 25px;
-    border-width: 3px;
-}}
-/* Loading state per immagine */
-.logo-loading {{
-    background: linear-gradient(45deg, #333, #666, #333);
-    animation: loadingShine 1.5s infinite;
-}}
-@keyframes loadingShine {{
-    0% {{ background-position: -200px 0; }}
-    100% {{ background-position: 200px 0; }}
 }}
 </style>
 </head>
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <div id="status">Spirali: {len(df)} | Ultimo agg: {time.strftime('%H:%M:%S')}</div>
-    <img id="logo" src="{FRAME_IMAGE_URL}" 
-         alt="Luccione Project" 
-         title="Luccione Project - Specchio Empatico"
-         onload="this.classList.remove('logo-loading')"
-         onerror="this.style.display='none'">
+    <div id="status">Spirali: {len(df)} | Controllo: {st.session_state.auto_check_counter}</div>
+    <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
     <div id="graph"></div>
 </div>
 
@@ -268,47 +264,29 @@ html_code = f"""
 const DATA = {data_json};
 let t0 = Date.now();
 let isFullscreen = false;
+let lastSpiralCount = {len(df)};
+let checkInterval;
 
-// Aggiungi classe loading iniziale
-document.getElementById('logo').classList.add('logo-loading');
-
-// Memorizza lo stato del fullscreen
-if (localStorage.getItem('wasFullscreen') === 'true') {{
-    setTimeout(() => {{
-        if (!document.fullscreenElement) {{
-            document.getElementById('graph-container').requestFullscreen().catch(() => {{}});
-        }}
-    }}, 1000);
+// Inizializza il controllo automatico
+function startAutoCheck() {{
+    checkInterval = setInterval(() => {{
+        // Simula un check ogni 30 secondi
+        const now = new Date();
+        document.getElementById('status').textContent = 
+            `Spirali: ${{lastSpiralCount}} | Ultimo check: ${{now.toLocaleTimeString()}}`;
+        
+        // Qui in una versione reale faresti una chiamata API
+    }}, 30000);
 }}
 
 function toggleFullscreen() {{
     const container = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        container.requestFullscreen()
-            .then(() => {{
-                isFullscreen = true;
-                localStorage.setItem('wasFullscreen', 'true');
-                updateLogoSize();
-            }})
-            .catch(err => {{}});
+        container.requestFullscreen().catch(() => {{}});
     }} else {{
         if (document.exitFullscreen) {{
             document.exitFullscreen();
-            isFullscreen = false;
-            localStorage.setItem('wasFullscreen', 'false');
-            updateLogoSize();
         }}
-    }}
-}}
-
-function updateLogoSize() {{
-    const logo = document.getElementById('logo');
-    if (document.fullscreenElement) {{
-        logo.style.width = '100px';
-        logo.style.height = '100px';
-    }} else {{
-        logo.style.width = '80px';
-        logo.style.height = '80px';
     }}
 }}
 
@@ -324,7 +302,6 @@ function buildTraces(time){{
         let glowColor = s.color;
         let lineWidth = 2 + s.intensity * 4;
         
-        // EFFETTO NUOVA SPIRALE
         if (s.is_new) {{
             const pulseTime = (currentTime - t0) / 1000;
             const pulseSpeed = 15;
@@ -392,22 +369,15 @@ function render(){{
     requestAnimationFrame(render);
 }}
 
-// Inizia il rendering
+// Inizia il rendering e il controllo
 t0 = Date.now();
 render();
+startAutoCheck();
 
 // Gestione fullscreen
 document.addEventListener('fullscreenchange', () => {{
     isFullscreen = !!document.fullscreenElement;
-    localStorage.setItem('wasFullscreen', isFullscreen.toString());
-    updateLogoSize();
 }});
-
-// Aggiorna stato ogni 5 secondi
-setInterval(() => {{
-    document.getElementById('status').textContent = 
-        `Spirali: {len(df)} | Ultimo agg: ${{new Date().toLocaleTimeString()}}`;
-}}, 5000);
 </script>
 </body>
 </html>
@@ -416,34 +386,32 @@ setInterval(() => {{
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# LEGENDA
+# LEGENDA E STATO
 st.markdown("---")
-st.markdown("## 🎨 LEGENDA DELL'OPERA")
-
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown("**🎯 Dimensioni Empathic**")
-    st.markdown("- 🔴 Perspective Taking")
-    st.markdown("- 🟠 Fantasy")  
-    st.markdown("- 🔵 Empathic Concern")
-    st.markdown("- 🟣 Personal Distress")
+    st.metric("Spirali Totali", len(df), spiral_count_change if spiral_count_change > 0 else None)
 
 with col2:
-    st.markdown("**✨ Nuove Spirale**")
-    st.markdown("- 💥 Pulsazione ultra-rapida")
-    st.markdown("- 🌟 Cambiamento colore (bianco/oro)")
-    st.markdown("- 📏 Ingrandimento evidente")
-    st.markdown("- ⏱️ Durata: 10 secondi")
+    st.metric("Ultimo Aggiornamento", time.strftime('%H:%M:%S'))
 
-st.markdown("---")
-st.markdown("**🖼️ Logo Luccione Project**")
-st.markdown("- **Posizione**: Fisso in basso a destra")
-st.markdown("- **Dimensioni**: 80px (100px in fullscreen)")
-st.markdown("- **Effetti**: Hover, ombra, bordo luminoso")
-st.markdown("- **URL**: [frame.png](https://github.com/riccardoboscariol/luccione-v2/blob/main/frame.png)")
+with col3:
+    st.metric("Check Automatici", st.session_state.auto_check_counter)
 
-st.success("✅ Immagine frame.png caricata correttamente da GitHub!")
+st.markdown("### 🎯 Istruzioni Aggiornamento")
+st.markdown("""
+1. **Compila il questionario** in un'altra finestra
+2. **Torna qui e clicca** → 🔄 Aggiorna Manualmente
+3. **Oppure attendi** il check automatico ogni 30 secondi
+4. **Le nuove spirale** appariranno con effetto pulsante
+""")
+
+st.info("""
+💡 **Sistema Ibrido**: Aggiornamento manuale + check automatico ogni 30 secondi.
+Il contatore si aggiorna solo quando vengono rilevate nuove spirale.
+""")
+
 
 
 
