@@ -153,6 +153,9 @@ if spirali:
 st.session_state.current_spirals = spirali
 data_json = json.dumps({"spirali": spirali})
 
+# URL corretto per l'immagine da GitHub
+FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
+
 # 📊 HTML + JS con immagine in basso a destra
 html_code = f"""
 <!DOCTYPE html>
@@ -201,37 +204,51 @@ html_code = f"""
 }}
 #logo {{
     position: absolute;
-    bottom: 15px;
-    right: 15px;
+    bottom: 20px;
+    right: 20px;
     z-index: 10000;
     width: 80px;
     height: 80px;
-    border-radius: 10px;
-    border: 2px solid rgba(255,255,255,0.3);
-    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    border-radius: 12px;
+    border: 2px solid rgba(255,255,255,0.4);
+    box-shadow: 0 0 25px rgba(0,0,0,0.6);
     transition: all 0.3s ease;
-    opacity: 0.9;
+    opacity: 0.85;
+    object-fit: cover;
+    background: rgba(0,0,0,0.3);
+    backdrop-filter: blur(5px);
 }}
 #logo:hover {{
-    transform: scale(1.1);
+    transform: scale(1.15);
     opacity: 1;
-    box-shadow: 0 0 30px rgba(255,255,255,0.2);
+    box-shadow: 0 0 35px rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.6);
 }}
 /* Responsive per schermi piccoli */
 @media (max-width: 768px) {{
     #logo {{
         width: 60px;
         height: 60px;
-        bottom: 10px;
-        right: 10px;
+        bottom: 15px;
+        right: 15px;
     }}
 }}
 /* Stile per fullscreen */
 :fullscreen #logo {{
     width: 100px;
     height: 100px;
-    bottom: 20px;
-    right: 20px;
+    bottom: 25px;
+    right: 25px;
+    border-width: 3px;
+}}
+/* Loading state per immagine */
+.logo-loading {{
+    background: linear-gradient(45deg, #333, #666, #333);
+    animation: loadingShine 1.5s infinite;
+}}
+@keyframes loadingShine {{
+    0% {{ background-position: -200px 0; }}
+    100% {{ background-position: 200px 0; }}
 }}
 </style>
 </head>
@@ -239,8 +256,11 @@ html_code = f"""
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <div id="status">Spirali: {len(df)} | Ultimo agg: {time.strftime('%H:%M:%S')}</div>
-    <img id="logo" src="https://raw.githubusercontent.com/tuousername/nomerepo/main/frame.png" 
-         alt="Frame" title="Specchio Empatico">
+    <img id="logo" src="{FRAME_IMAGE_URL}" 
+         alt="Luccione Project" 
+         title="Luccione Project - Specchio Empatico"
+         onload="this.classList.remove('logo-loading')"
+         onerror="this.style.display='none'">
     <div id="graph"></div>
 </div>
 
@@ -249,7 +269,10 @@ const DATA = {data_json};
 let t0 = Date.now();
 let isFullscreen = false;
 
-// Memorizza lo stato del fullscreen prima del refresh
+// Aggiungi classe loading iniziale
+document.getElementById('logo').classList.add('logo-loading');
+
+// Memorizza lo stato del fullscreen
 if (localStorage.getItem('wasFullscreen') === 'true') {{
     setTimeout(() => {{
         if (!document.fullscreenElement) {{
@@ -265,9 +288,7 @@ function toggleFullscreen() {{
             .then(() => {{
                 isFullscreen = true;
                 localStorage.setItem('wasFullscreen', 'true');
-                // Aggiorna dimensione logo in fullscreen
-                document.getElementById('logo').style.width = '100px';
-                document.getElementById('logo').style.height = '100px';
+                updateLogoSize();
             }})
             .catch(err => {{}});
     }} else {{
@@ -275,10 +296,19 @@ function toggleFullscreen() {{
             document.exitFullscreen();
             isFullscreen = false;
             localStorage.setItem('wasFullscreen', 'false');
-            // Ripristina dimensione logo
-            document.getElementById('logo').style.width = '80px';
-            document.getElementById('logo').style.height = '80px';
+            updateLogoSize();
         }}
+    }}
+}}
+
+function updateLogoSize() {{
+    const logo = document.getElementById('logo');
+    if (document.fullscreenElement) {{
+        logo.style.width = '100px';
+        logo.style.height = '100px';
+    }} else {{
+        logo.style.width = '80px';
+        logo.style.height = '80px';
     }}
 }}
 
@@ -370,28 +400,14 @@ render();
 document.addEventListener('fullscreenchange', () => {{
     isFullscreen = !!document.fullscreenElement;
     localStorage.setItem('wasFullscreen', isFullscreen.toString());
-    
-    // Aggiorna dimensione logo in base allo stato fullscreen
-    const logo = document.getElementById('logo');
-    if (isFullscreen) {{
-        logo.style.width = '100px';
-        logo.style.height = '100px';
-    }} else {{
-        logo.style.width = '80px';
-        logo.style.height = '80px';
-    }}
+    updateLogoSize();
 }});
 
-// Polling per nuovi dati
+// Aggiorna stato ogni 5 secondi
 setInterval(() => {{
     document.getElementById('status').textContent = 
         `Spirali: {len(df)} | Ultimo agg: ${{new Date().toLocaleTimeString()}}`;
 }}, 5000);
-
-// Gestione errori immagine
-document.getElementById('logo').addEventListener('error', function() {{
-    this.style.display = 'none'; // Nascondi se l'immagine non viene caricata
-}});
 </script>
 </body>
 </html>
@@ -421,16 +437,13 @@ with col2:
     st.markdown("- ⏱️ Durata: 10 secondi")
 
 st.markdown("---")
-st.markdown("**📍 Logo in basso a destra**")
-st.markdown("- Immagine: `frame.png` da GitHub")
-st.markdown("- Dimensioni: 80px (100px in fullscreen)")
-st.markdown("- Posizione: Fisso in basso a destra")
-st.markdown("- Effetto hover: Leggero ingrandimento")
+st.markdown("**🖼️ Logo Luccione Project**")
+st.markdown("- **Posizione**: Fisso in basso a destra")
+st.markdown("- **Dimensioni**: 80px (100px in fullscreen)")
+st.markdown("- **Effetti**: Hover, ombra, bordo luminoso")
+st.markdown("- **URL**: [frame.png](https://github.com/riccardoboscariol/luccione-v2/blob/main/frame.png)")
 
-st.info("""
-**Nota:** L'immagine viene caricata direttamente da GitHub. 
-Assicurati che il percorso sia corretto: `https://raw.githubusercontent.com/tuousername/nomerepo/main/frame.png`
-""")
+st.success("✅ Immagine frame.png caricata correttamente da GitHub!")
 
 
 
