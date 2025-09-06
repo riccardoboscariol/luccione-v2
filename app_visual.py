@@ -237,16 +237,7 @@ async function checkForNewSpirals() {{
     isChecking = true;
     
     try {{
-        // Simuliamo una chiamata API - in produzione qui andrebbe una vera chiamata
-        const response = await fetch(window.location.href, {{
-            method: 'GET',
-            headers: {{
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            }}
-        });
-        
-        // Il vero controllo sarebbe qui, ma per demo simuliamo
+        // Simuliamo una chiamata API
         const now = Date.now();
         const simulatedNewSpirals = Math.random() > 0.9 ? 1 : 0;
         
@@ -264,7 +255,7 @@ async function checkForNewSpirals() {{
         }}
         
         document.getElementById('status').textContent = 
-            `Spirali: ${{currentSpiralCount}} | Ultimo check: ${{new Date().toLocaleTimeString()}}`;
+            "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
             
     }} catch (error) {{
         console.log('Check automatico:', error);
@@ -320,7 +311,7 @@ function highlightNewSpirals(newSpirals) {{
 
 function updateSpiralCount() {{
     document.getElementById('status').textContent = 
-        `Spirali: ${{currentSpiralCount}} | Aggiornato: ${{new Date().toLocaleTimeString()}}`;
+        "Spirali: " + currentSpiralCount + " | Aggiornato: " + new Date().toLocaleTimeString();
 }}
 
 function toggleFullscreen() {{
@@ -464,14 +455,6 @@ st.success("""
 Nuove aggiunte appariranno con effetti luminosi senza refresh della pagina.
 """)
 
-# Script nascosto per il vero aggiornamento (userebbe WebSocket in produzione)
-st.markdown("""
-<script>
-// Questo sarebbe il vero sistema di aggiornamento con WebSocket
-// Per ora è simulato nel JavaScript dell'iframe
-console.log("Sistema auto-aggiornamento attivato");
-</script>
-""", unsafe_allow_html=True)
 
 
 
