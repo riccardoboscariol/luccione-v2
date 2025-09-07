@@ -127,9 +127,10 @@ def generate_spirals(df):
             "base_color": base_color, "is_new": False
         })
 
+    # CORREZIONE ERRORI DI SINTASSI - linea 131
     if spirali:
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-        y_min, y_max = all_y.min(), all_y.max()
+        y_min, y_max = all_y.min(), all_y.max()  # Correzione qui
         y_range = y_max - y_min
         OFFSET = -0.06 * y_range
         for s in spirali: 
@@ -323,7 +324,7 @@ function render() {{
         if (spiral.is_new) {{
             const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 8);
             lineWidth *= (1 + pulse);
-            glowColor = `rgb(${{255}}, ${{255}}, 255)`;
+            glowColor = 'rgb(255, 255, 255)';
         }}
         
         ctx.strokeStyle = glowColor;
@@ -378,7 +379,7 @@ window.addEventListener('load', function() {{
     // Controllo aggiornamenti ogni 3 secondi
     setInterval(checkForUpdates, 3000);
     
-    statusElement.textContent = `Spirali: ${{currentSpiralCount}} | Sistema pronto`;
+    statusElement.textContent = "Spirali: " + currentSpiralCount + " | Sistema pronto";
 }});
 
 window.addEventListener('resize', handleResize);
@@ -490,6 +491,5 @@ if (window.updateTrigger !== {st.session_state.update_trigger}) {{
 }}
 </script>
 """, unsafe_allow_html=True)
-
 
 
