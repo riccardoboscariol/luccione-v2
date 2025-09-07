@@ -61,6 +61,8 @@ if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = 0
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().isoformat()
+if 'update_trigger' not in st.session_state:
+    st.session_state.update_trigger = 0
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -128,10 +130,10 @@ def generate_spirals(df):
             "base_color": base_color
         })
 
-    # Calcolo offset originale - CORREZIONE ERRORE DI SINTASSI
+    # Calcolo offset originale
     if spirali:
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-        y_min, y_max = all_y.min(), all_y.max()  # Correzione qui
+        y_min, y_max = all_y.min(), all_y.max()
         y_range = y_max - y_min
         OFFSET = -0.06 * y_range
         for s in spirali: 
@@ -149,29 +151,35 @@ st.session_state.last_data_hash = get_data_hash(df)
 # Genera le spirali
 spirali = generate_spirals(df)
 st.session_state.current_spirals = spirali
-initial_data_json = json.dumps({"spirali": spirali, "count": initial_count})
 
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# Aggiungiamo un endpoint per il check degli aggiornamenti
-if "check_update" in st.query_params:
-    current_df = get_sheet_data()
-    current_count = len(current_df)
-    updated = current_count > st.session_state.spiral_count
+# Controlla se ci sono nuovi dati (sul lato server)
+current_time = time.time()
+if current_time - st.session_state.last_check_time > 10:  # Controlla ogni 10 secondi
+    new_df = get_sheet_data()
+    new_hash = get_data_hash(new_df)
     
-    if updated:
-        st.session_state.sheet_data = current_df
-        st.session_state.spiral_count = current_count
-        st.session_state.current_spirals = generate_spirals(current_df)
+    if new_hash != st.session_state.last_data_hash:
+        st.session_state.sheet_data = new_df
+        st.session_state.spiral_count = len(new_df)
+        st.session_state.last_data_hash = new_hash
+        st.session_state.current_spirals = generate_spirals(new_df)
         st.session_state.last_update_time = datetime.now().isoformat()
+        st.session_state.update_trigger += 1  # Incrementa il trigger per forzare l'aggiornamento
+        st.rerun()
     
-    st.json({
-        "count": current_count,
-        "updated": updated,
-        "last_update": st.session_state.last_update_time
-    })
-    st.stop()
+    st.session_state.last_check_time = current_time
+
+# Preparazione dati per il frontend
+spirals_data = {
+    "spirali": st.session_state.current_spirals,
+    "count": st.session_state.spiral_count,
+    "last_update": st.session_state.last_update_time,
+    "update_trigger": st.session_state.update_trigger
+}
+initial_data_json = json.dumps(spirals_data)
 
 # 📊 HTML + JS con AUTO-AGGIORNAMENTO REALE
 html_code = f"""
@@ -255,7 +263,7 @@ html_code = f"""
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <div id="status">Spirali: {initial_count} | Auto-aggiornamento: ATTIVO</div>
+    <div id="status">Spirali: {st.session_state.spiral_count} | Auto-aggiornamento: ATTIVO</div>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
     <div id="graph"></div>
 </div>
@@ -263,9 +271,25 @@ html_code = f"""
 <script>
 let currentData = {initial_data_json};
 let t0 = Date.now();
-let currentSpiralCount = {initial_count};
+let currentSpiralCount = {st.session_state.spiral_count};
+let lastUpdateTrigger = {st.session_state.update_trigger};
 let checkInterval;
 let isChecking = false;
+
+// Funzione per verificare se ci sono aggiornamenti
+function checkForUpdates() {{
+    // Controlla se la pagina è stata aggiornata dal server
+    if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
+        // Ricarica la pagina per vedere le nuove spirali
+        document.getElementById('status').textContent = 
+            "Nuove spirali trovate! Ricarico...";
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+        return true;
+    }}
+    return false;
+}}
 
 // Funzione per fare il check delle nuove spirale
 async function checkForNewSpirals() {{
@@ -273,30 +297,15 @@ async function checkForNewSpirals() {{
     isChecking = true;
     
     try {{
-        // Chiamata API per verificare aggiornamenti
-        const response = await fetch('/?check_update=true&_=' + new Date().getTime(), {{
-            method: 'GET',
-            headers: {{
-                'X-Requested-With': 'XMLHttpRequest',
-                'Cache-Control': 'no-cache'
-            }}
-        }});
-        
-        if (response.ok) {{
-            const data = await response.json();
-            
-            if (data.updated && data.count > currentSpiralCount) {{
-                // Ricarica la pagina per vedere le nuove spirali
-                document.getElementById('status').textContent = 
-                    "Nuove spirali trovate! Ricarico...";
-                setTimeout(() => {{
-                    window.location.reload();
-                }}, 1000);
-            }} else {{
-                document.getElementById('status').textContent = 
-                    "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
-            }}
+        // Prima verifica se ci sono aggiornamenti tramite il trigger
+        if (checkForUpdates()) {{
+            return;
         }}
+        
+        // Se non ci sono aggiornamenti, mostra lo stato
+        document.getElementById('status').textContent = 
+            "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
+            
     }} catch (error) {{
         console.log('Check automatico:', error);
         document.getElementById('status').textContent = 
@@ -408,6 +417,9 @@ document.addEventListener('fullscreenchange', () => {{
     }}
 }});
 
+// Esponi il trigger agli aggiornamenti
+window.updateTrigger = {st.session_state.update_trigger};
+
 // Pulizia
 window.addEventListener('beforeunload', () => {{
     clearInterval(checkInterval);
@@ -416,22 +428,6 @@ window.addEventListener('beforeunload', () => {{
 </body>
 </html>
 """
-
-# Controlla se ci sono nuovi dati
-current_time = time.time()
-if current_time - st.session_state.last_check_time > 10:  # Controlla ogni 10 secondi
-    new_df = get_sheet_data()
-    new_hash = get_data_hash(new_df)
-    
-    if new_hash != st.session_state.last_data_hash:
-        st.session_state.sheet_data = new_df
-        st.session_state.spiral_count = len(new_df)
-        st.session_state.last_data_hash = new_hash
-        st.session_state.current_spirals = generate_spirals(new_df)
-        st.session_state.last_update_time = datetime.now().isoformat()
-        st.rerun()
-    
-    st.session_state.last_check_time = current_time
 
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
@@ -446,7 +442,7 @@ with col1:
     st.metric("Spirali Totali", st.session_state.spiral_count, delta=None)
     st.info("""
     **✨ Auto-aggiornamento ATTIVO**
-    - Check ogni 5 secondi
+    - Check ogni 10 secondi (lato server)
     - Ricarica automatica quando trova nuovi dati
     - Contatore in tempo reale
     - Funziona anche a schermo intero
@@ -457,7 +453,7 @@ with col2:
     st.metric("Stato Sistema", status)
     st.info("""
     **🔧 Tecnologia:**
-    - JavaScript polling ogni 5 secondi
+    - Controllo lato server ogni 10 secondi
     - Collegamento diretto al Google Sheet
     - Ricarica automatica della pagina
     - Supporto schermo intero
@@ -480,9 +476,23 @@ if st.button("🔍 Controlla manualmente nuovi dati"):
         st.session_state.last_data_hash = get_data_hash(new_df)
         st.session_state.current_spirals = generate_spirals(new_df)
         st.session_state.last_update_time = datetime.now().isoformat()
+        st.session_state.update_trigger += 1
         st.rerun()
     else:
         st.info("Nessun nuovo questionario trovato.")
+
+# Aggiungi JavaScript per aggiornare la pagina quando il trigger cambia
+st.markdown(f"""
+<script>
+// Controlla periodicamente se ci sono aggiornamenti
+setInterval(() => {{
+    if (window.updateTrigger !== {st.session_state.update_trigger}) {{
+        console.log("Aggiornamento rilevato, ricarico la pagina...");
+        window.location.reload();
+    }}
+}}, 3000);
+</script>
+""", unsafe_allow_html=True)
 
 
 
