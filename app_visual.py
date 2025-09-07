@@ -64,7 +64,7 @@ if 'last_update_time' not in st.session_state:
 if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
 if 'auto_check_interval' not in st.session_state:
-    st.session_state.auto_check_interval = 15  # secondi
+    st.session_state.auto_check_interval = 15
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -162,6 +162,7 @@ if current_time - st.session_state.last_check_time > st.session_state.auto_check
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
+            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
             st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
@@ -390,11 +391,12 @@ function checkForUpdates() {{
     
     if (now >= nextCheckTime) {{
         statusElement.textContent = "Controllo nuovi dati...";
+        statusElement.classList.add('pulse');
         
         // Forza il refresh per controllare nuovi dati
         setTimeout(() => {{
             window.location.reload();
-        }}, 1000);
+        }}, 1500);
         
         // Resetta il timer
         nextCheckTime = now + {st.session_state.auto_check_interval};
@@ -413,6 +415,14 @@ window.addEventListener('load', function() {{
     
     // Aggiorna status iniziale
     updateStatus();
+    
+    // Verifica se ci sono aggiornamenti pendenti
+    if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
+        statusElement.textContent = "Aggiornamento in corso...";
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+    }}
 }});
 
 window.addEventListener('resize', handleResize);
@@ -425,6 +435,7 @@ canvas.addEventListener('dblclick', toggleFullscreen);
 
 // Esponi il trigger per aggiornamenti
 window.updateTrigger = {st.session_state.update_trigger};
+window.currentSpiralCount = {st.session_state.spiral_count};
 </script>
 </body>
 </html>
@@ -494,15 +505,17 @@ st.success("""
 - **Click sul pulsante ⛶** per schermo intero
 - **ESC** per uscire dallo schermo intero
 - Il sistema controlla automaticamente ogni 15 secondi
-- I nuovi dati appariranno automaticamente
+- I nuovi dati appariranno automaticamente dopo il refresh
 """)
 
 # JavaScript per forzare l'aggiornamento se necessario
 st.markdown(f"""
 <script>
 // Forza l'aggiornamento se ci sono nuovi dati
-if (window.updateTrigger !== {st.session_state.update_trigger}) {{
-    window.location.reload();
+if (window.updateTrigger !== {st.session_state.update_trigger} || window.currentSpiralCount !== {st.session_state.spiral_count}) {{
+    setTimeout(() => {{
+        window.location.reload();
+    }}, 500);
 }}
 </script>
 """, unsafe_allow_html=True)
