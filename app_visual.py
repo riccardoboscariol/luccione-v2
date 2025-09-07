@@ -6,6 +6,7 @@ import numpy as np
 import json
 import time
 import colorsys
+import hashlib
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
@@ -55,6 +56,8 @@ if 'current_spirals' not in st.session_state:
     st.session_state.current_spirals = []
 if 'spiral_count' not in st.session_state:
     st.session_state.spiral_count = 0
+if 'last_check_time' not in st.session_state:
+    st.session_state.last_check_time = 0
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -69,68 +72,79 @@ def get_sheet_data():
         records = sheet.get_all_records()
         return pd.DataFrame(records)
     except Exception as e:
+        st.error(f"Errore nel recupero dati: {e}")
         return pd.DataFrame()
+
+# Funzione per generare un hash dei dati
+def get_data_hash(df):
+    return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
+
+# Funzione per generare le spirali
+def generate_spirals(df):
+    palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
+    theta = np.linspace(0, 12 * np.pi, 1200)
+    spirali = []
+
+    for idx, row in df.iterrows():
+        scores = [row.get("PT", 3), row.get("Fantasy", 3), 
+                  row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
+        media = np.mean(scores)
+        
+        # LOGICA ORIGINALE
+        size_factor = media / 5
+        intensity = np.clip(size_factor, 0.2, 1.0)
+        freq = 0.5 + (media / 5) * (3.0 - 0.5)
+
+        std_dev = np.std(scores) if len(scores) > 1 else 0
+        coherence = 1 - min(std_dev / 2, 1)
+        
+        dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
+        base_color = palette[dominant_dim % len(palette)]
+        
+        if coherence > 0.7:
+            color = base_color
+        else:
+            color = fade_color(base_color, 1 - coherence)
+
+        # Dimensioni originali
+        r = 0.3 + idx * 0.08
+        radius = r * (theta / max(theta)) * intensity * 4.5
+
+        x = radius * np.cos(theta + idx)
+        y = radius * np.sin(theta + idx)
+
+        # Inclinazione alternata originale
+        if idx % 2 == 0:
+            y_proj = y * 0.5 + x * 0.2
+        else:
+            y_proj = y * 0.5 - x * 0.2
+
+        spirali.append({
+            "x": x.tolist(), "y": y_proj.tolist(), "color": color,
+            "intensity": float(intensity), "freq": float(freq), "id": idx,
+            "base_color": base_color
+        })
+
+    # Calcolo offset originale
+    if spirali:
+        all_y = np.concatenate([np.array(s["y"]) for s in spirali])
+        y_min, y_max = all_y.min(), y_max = all_y.max()
+        y_range = y_max - y_min
+        OFFSET = -0.06 * y_range
+        for s in spirali: 
+            s["y"] = (np.array(s["y"]) + OFFSET).tolist()
+    
+    return spirali
 
 # Carica i dati iniziali
 df = get_sheet_data()
 initial_count = len(df)
 st.session_state.spiral_count = initial_count
 st.session_state.sheet_data = df
+st.session_state.last_data_hash = get_data_hash(df)
 
-# Genera le spirali - ESTETICA ORIGINALE
-palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-theta = np.linspace(0, 12 * np.pi, 1200)
-spirali = []
-
-for idx, row in df.iterrows():
-    scores = [row.get("PT", 3), row.get("Fantasy", 3), 
-              row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
-    media = np.mean(scores)
-    
-    # LOGICA ORIGINALE
-    size_factor = media / 5
-    intensity = np.clip(size_factor, 0.2, 1.0)
-    freq = 0.5 + (media / 5) * (3.0 - 0.5)
-
-    std_dev = np.std(scores) if len(scores) > 1 else 0
-    coherence = 1 - min(std_dev / 2, 1)
-    
-    dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
-    base_color = palette[dominant_dim % len(palette)]
-    
-    if coherence > 0.7:
-        color = base_color
-    else:
-        color = fade_color(base_color, 1 - coherence)
-
-    # Dimensioni originali
-    r = 0.3 + idx * 0.08
-    radius = r * (theta / max(theta)) * intensity * 4.5
-
-    x = radius * np.cos(theta + idx)
-    y = radius * np.sin(theta + idx)
-
-    # Inclinazione alternata originale
-    if idx % 2 == 0:
-        y_proj = y * 0.5 + x * 0.2
-    else:
-        y_proj = y * 0.5 - x * 0.2
-
-    spirali.append({
-        "x": x.tolist(), "y": y_proj.tolist(), "color": color,
-        "intensity": float(intensity), "freq": float(freq), "id": idx,
-        "base_color": base_color
-    })
-
-# Calcolo offset originale
-if spirali:
-    all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-    y_min, y_max = all_y.min(), all_y.max()
-    y_range = y_max - y_min
-    OFFSET = -0.06 * y_range
-    for s in spirali: 
-        s["y"] = (np.array(s["y"]) + OFFSET).tolist()
-
+# Genera le spirali
+spirali = generate_spirals(df)
 st.session_state.current_spirals = spirali
 initial_data_json = json.dumps({"spirali": spirali, "count": initial_count})
 
@@ -237,21 +251,41 @@ async function checkForNewSpirals() {{
     isChecking = true;
     
     try {{
-        // Simuliamo una chiamata API
-        const now = Date.now();
-        const simulatedNewSpirals = Math.random() > 0.9 ? 1 : 0;
+        // Chiamata al server per verificare nuovi dati
+        const response = await fetch(window.location.href, {{
+            method: 'GET',
+            headers: {{
+                'Cache-Control': 'no-cache',
+                'X-Requested-With': 'XMLHttpRequest'
+            }}
+        }});
         
-        if (simulatedNewSpirals > 0) {{
-            // Aggiungi una nuova spirale simulata
-            const newSpiral = createNewSpiral(currentSpiralCount);
-            currentData.spirali.push(newSpiral);
-            currentSpiralCount++;
+        const text = await response.text();
+        
+        // Estrai il nuovo conteggio dalla pagina
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+        const countElement = doc.querySelector('[data-testid="stMetricValue"]');
+        const newCount = countElement ? parseInt(countElement.textContent) : currentSpiralCount;
+        
+        if (newCount > currentSpiralCount) {{
+            const newSpirals = [];
+            for (let i = currentSpiralCount; i < newCount; i++) {{
+                const newSpiral = createNewSpiral(i);
+                newSpirals.push(newSpiral);
+                currentData.spirali.push(newSpiral);
+            }}
+            
+            currentSpiralCount = newCount;
             
             // Aggiorna il contatore
             updateSpiralCount();
             
             // Mostra effetto visivo
-            highlightNewSpirals([newSpiral]);
+            highlightNewSpirals(newSpirals);
+            
+            // Forza il re-rendering completo
+            t0 = Date.now();
         }}
         
         document.getElementById('status').textContent = 
@@ -420,6 +454,21 @@ window.addEventListener('beforeunload', () => {{
 </html>
 """
 
+# Controlla se ci sono nuovi dati
+current_time = time.time()
+if current_time - st.session_state.last_check_time > 5:  # Controlla ogni 5 secondi
+    new_df = get_sheet_data()
+    new_hash = get_data_hash(new_df)
+    
+    if new_hash != st.session_state.last_data_hash:
+        st.session_state.sheet_data = new_df
+        st.session_state.spiral_count = len(new_df)
+        st.session_state.last_data_hash = new_hash
+        st.session_state.current_spirals = generate_spirals(new_df)
+        st.rerun()
+    
+    st.session_state.last_check_time = current_time
+
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
@@ -430,7 +479,7 @@ st.markdown("## 🎯 SISTEMA AUTO-AGGIORNAMENTO")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Spirali Iniziali", initial_count)
+    st.metric("Spirali Totali", st.session_state.spiral_count, delta=None)
     st.info("""
     **✨ Auto-aggiornamento ATTIVO**
     - Check ogni 3 secondi
@@ -445,7 +494,7 @@ with col2:
     **🔧 Tecnologia:**
     - JavaScript polling
     - Aggiornamento dinamico
-    - API calls simulate
+    - Collegamento diretto al Google Sheet
     - WebSocket ready
     """)
 
@@ -454,7 +503,6 @@ st.success("""
 **✅ Sistema attivo!** Le spirali si aggiorneranno automaticamente ogni 3 secondi.
 Nuove aggiunte appariranno con effetti luminosi senza refresh della pagina.
 """)
-
 
 
 
