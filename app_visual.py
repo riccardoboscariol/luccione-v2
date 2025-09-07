@@ -65,6 +65,8 @@ if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
 if 'auto_check_interval' not in st.session_state:
     st.session_state.auto_check_interval = 15
+if 'force_reload' not in st.session_state:
+    st.session_state.force_reload = False
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -162,13 +164,13 @@ if current_time - st.session_state.last_check_time > st.session_state.auto_check
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
-            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
             st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
             st.session_state.current_spirals = generate_spirals(new_df)
             st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
             st.session_state.update_trigger += 1
+            st.session_state.force_reload = True
             st.session_state.last_check_time = current_time
             st.rerun()
         else:
@@ -184,7 +186,8 @@ spirals_data = {
     "count": st.session_state.spiral_count,
     "last_update": st.session_state.last_update_time,
     "update_trigger": st.session_state.update_trigger,
-    "next_check": st.session_state.last_check_time + st.session_state.auto_check_interval
+    "next_check": st.session_state.last_check_time + st.session_state.auto_check_interval,
+    "force_reload": st.session_state.force_reload
 }
 initial_data_json = json.dumps(spirals_data)
 
@@ -289,6 +292,7 @@ let spirals = currentData.spirali || [];
 let currentSpiralCount = {st.session_state.spiral_count};
 let lastUpdateTrigger = {st.session_state.update_trigger};
 let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
+let forceReload = {str(st.session_state.force_reload).lower()};
 
 // Elementi DOM
 const canvas = document.getElementById('canvas');
@@ -390,13 +394,13 @@ function checkForUpdates() {{
     const now = Date.now() / 1000;
     
     if (now >= nextCheckTime) {{
-        statusElement.textContent = "Controllo nuovi dati...";
+        statusElement.textContent = "🔄 Controllo nuovi dati...";
         statusElement.classList.add('pulse');
         
         // Forza il refresh per controllare nuovi dati
         setTimeout(() => {{
             window.location.reload();
-        }}, 1500);
+        }}, 1000);
         
         // Resetta il timer
         nextCheckTime = now + {st.session_state.auto_check_interval};
@@ -410,6 +414,15 @@ window.addEventListener('load', function() {{
     initCanvas();
     render();
     
+    // Forza il reload se necessario
+    if (forceReload) {{
+        statusElement.textContent = "🔄 Aggiornamento in corso...";
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+        return;
+    }}
+    
     // Controllo aggiornamenti ogni secondo
     setInterval(checkForUpdates, 1000);
     
@@ -418,7 +431,7 @@ window.addEventListener('load', function() {{
     
     // Verifica se ci sono aggiornamenti pendenti
     if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
-        statusElement.textContent = "Aggiornamento in corso...";
+        statusElement.textContent = "🔄 Aggiornamento dati...";
         setTimeout(() => {{
             window.location.reload();
         }}, 1000);
@@ -433,9 +446,10 @@ document.addEventListener('fullscreenchange', handleResize);
 // Doppio click per fullscreen
 canvas.addEventListener('dblclick', toggleFullscreen);
 
-// Esponi il trigger per aggiornamenti
+// Esponi le variabili per aggiornamenti
 window.updateTrigger = {st.session_state.update_trigger};
 window.currentSpiralCount = {st.session_state.spiral_count};
+window.forceReload = {str(st.session_state.force_reload).lower()};
 </script>
 </body>
 </html>
@@ -487,6 +501,7 @@ if st.button("🔄 Controlla nuovi dati ora", type="primary"):
         st.session_state.current_spirals = generate_spirals(new_df)
         st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
         st.session_state.update_trigger += 1
+        st.session_state.force_reload = True
         st.session_state.last_check_time = time.time()
         st.rerun()
     else:
@@ -494,8 +509,13 @@ if st.button("🔄 Controlla nuovi dati ora", type="primary"):
         st.session_state.last_check_time = time.time()
 
 # Configurazione intervallo di controllo
-st.slider("Intervallo di controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5, 
-          key="auto_check_interval", help="Imposta ogni quanti secondi controllare nuovi dati")
+new_interval = st.slider("Intervallo di controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5, 
+          help="Imposta ogni quanti secondi controllare nuovi dati")
+
+if new_interval != st.session_state.auto_check_interval:
+    st.session_state.auto_check_interval = new_interval
+    st.session_state.last_check_time = time.time()
+    st.rerun()
 
 # Istruzioni
 st.markdown("---")
@@ -512,12 +532,20 @@ st.success("""
 st.markdown(f"""
 <script>
 // Forza l'aggiornamento se ci sono nuovi dati
-if (window.updateTrigger !== {st.session_state.update_trigger} || window.currentSpiralCount !== {st.session_state.spiral_count}) {{
+if (window.forceReload !== {str(st.session_state.force_reload).lower()} || 
+    window.updateTrigger !== {st.session_state.update_trigger} || 
+    window.currentSpiralCount !== {st.session_state.spiral_count}) {{
+    
+    console.log("Forzando aggiornamento...");
     setTimeout(() => {{
         window.location.reload();
     }}, 500);
 }}
 </script>
 """, unsafe_allow_html=True)
+
+# Reset force_reload dopo l'uso
+if st.session_state.force_reload:
+    st.session_state.force_reload = False
 
 
