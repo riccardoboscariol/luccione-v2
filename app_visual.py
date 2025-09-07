@@ -63,6 +63,8 @@ if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
 if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
+if 'auto_check_interval' not in st.session_state:
+    st.session_state.auto_check_interval = 15  # secondi
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -127,10 +129,9 @@ def generate_spirals(df):
             "base_color": base_color, "is_new": False
         })
 
-    # CORREZIONE ERRORI DI SINTASSI - linea 131
     if spirali:
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-        y_min, y_max = all_y.min(), all_y.max()  # Correzione qui
+        y_min, y_max = all_y.min(), all_y.max()
         y_range = y_max - y_min
         OFFSET = -0.06 * y_range
         for s in spirali: 
@@ -152,12 +153,37 @@ st.session_state.current_spirals = spirali
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
+# Controllo automatico dei nuovi dati - PRIMA del rendering HTML
+current_time = time.time()
+if current_time - st.session_state.last_check_time > st.session_state.auto_check_interval:
+    try:
+        new_df = get_sheet_data()
+        new_count = len(new_df)
+        new_hash = get_data_hash(new_df)
+        
+        if new_hash != st.session_state.last_data_hash:
+            st.session_state.sheet_data = new_df
+            st.session_state.spiral_count = new_count
+            st.session_state.last_data_hash = new_hash
+            st.session_state.current_spirals = generate_spirals(new_df)
+            st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
+            st.session_state.update_trigger += 1
+            st.session_state.last_check_time = current_time
+            st.rerun()
+        else:
+            st.session_state.last_check_time = current_time
+            
+    except Exception as e:
+        st.error(f"Errore durante il controllo: {e}")
+        st.session_state.last_check_time = current_time
+
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
     "count": st.session_state.spiral_count,
     "last_update": st.session_state.last_update_time,
-    "update_trigger": st.session_state.update_trigger
+    "update_trigger": st.session_state.update_trigger,
+    "next_check": st.session_state.last_check_time + st.session_state.auto_check_interval
 }
 initial_data_json = json.dumps(spirals_data)
 
@@ -250,7 +276,7 @@ body {{
 <body>
 <div id="container">
     <canvas id="canvas"></canvas>
-    <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
+    <div id="status">Spirali: {st.session_state.spiral_count} | Auto-aggiornamento: ATTIVO</div>
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
 </div>
@@ -261,6 +287,7 @@ let currentData = {initial_data_json};
 let spirals = currentData.spirali || [];
 let currentSpiralCount = {st.session_state.spiral_count};
 let lastUpdateTrigger = {st.session_state.update_trigger};
+let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
 
 // Elementi DOM
 const canvas = document.getElementById('canvas');
@@ -270,14 +297,11 @@ const statusElement = document.getElementById('status');
 // Variabili di rendering
 let t0 = Date.now();
 let animationId = null;
-let isFullscreen = false;
 
 // Inizializzazione canvas
 function initCanvas() {{
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    
-    // Sfondo nero permanente
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 }}
@@ -287,7 +311,7 @@ function render() {{
     const currentTime = Date.now();
     const elapsedTime = (currentTime - t0) / 1000;
     
-    // Pulisci il canvas con sfondo nero
+    // Sfondo nero
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
@@ -295,7 +319,7 @@ function render() {{
     const centerY = canvas.height / 2;
     const scale = Math.min(canvas.width, canvas.height) / 20;
     
-    // Renderizza ogni spirale
+    // Renderizza spirali
     spirals.forEach(spiral => {{
         if (!spiral.x || !spiral.y) return;
         
@@ -317,7 +341,6 @@ function render() {{
             }}
         }}
         
-        // Effetto per nuove spirali
         let lineWidth = 1 + spiral.intensity * 3;
         let glowColor = spiral.color;
         
@@ -340,9 +363,7 @@ function render() {{
 // Schermo intero
 function toggleFullscreen() {{
     if (!document.fullscreenElement) {{
-        document.documentElement.requestFullscreen().catch(err => {{
-            console.log('Error attempting to enable fullscreen:', err);
-        }});
+        document.documentElement.requestFullscreen();
     }} else {{
         document.exitFullscreen();
     }}
@@ -353,22 +374,33 @@ function handleResize() {{
     initCanvas();
 }}
 
+// Aggiorna il contatore di tempo
+function updateStatus() {{
+    const now = Date.now() / 1000;
+    const timeLeft = Math.max(0, nextCheckTime - now);
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = Math.floor(timeLeft % 60);
+    
+    statusElement.textContent = `Spirali: ${{currentSpiralCount}} | Prossimo controllo: ${{minutes}}m ${{seconds}}s`;
+}}
+
 // Controlla aggiornamenti
 function checkForUpdates() {{
-    try {{
-        if (window.updateTrigger !== lastUpdateTrigger) {{
-            lastUpdateTrigger = window.updateTrigger;
-            statusElement.textContent = "Nuove spirali! Aggiornamento...";
-            statusElement.classList.add('pulse');
-            
-            // Ricarica delicata
-            setTimeout(() => {{
-                window.location.reload();
-            }}, 1500);
-        }}
-    }} catch (error) {{
-        console.log('Update check error:', error);
+    const now = Date.now() / 1000;
+    
+    if (now >= nextCheckTime) {{
+        statusElement.textContent = "Controllo nuovi dati...";
+        
+        // Forza il refresh per controllare nuovi dati
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+        
+        // Resetta il timer
+        nextCheckTime = now + {st.session_state.auto_check_interval};
     }}
+    
+    updateStatus();
 }}
 
 // Inizializzazione
@@ -376,25 +408,23 @@ window.addEventListener('load', function() {{
     initCanvas();
     render();
     
-    // Controllo aggiornamenti ogni 3 secondi
-    setInterval(checkForUpdates, 3000);
+    // Controllo aggiornamenti ogni secondo
+    setInterval(checkForUpdates, 1000);
     
-    statusElement.textContent = "Spirali: " + currentSpiralCount + " | Sistema pronto";
+    // Aggiorna status iniziale
+    updateStatus();
 }});
 
 window.addEventListener('resize', handleResize);
 
 // Eventi fullscreen
-document.addEventListener('fullscreenchange', () => {{
-    isFullscreen = !!document.fullscreenElement;
-    setTimeout(handleResize, 100);
-}});
-
-// Esponi il trigger per aggiornamenti
-window.updateTrigger = {st.session_state.update_trigger};
+document.addEventListener('fullscreenchange', handleResize);
 
 // Doppio click per fullscreen
 canvas.addEventListener('dblclick', toggleFullscreen);
+
+// Esponi il trigger per aggiornamenti
+window.updateTrigger = {st.session_state.update_trigger};
 </script>
 </body>
 </html>
@@ -403,42 +433,22 @@ canvas.addEventListener('dblclick', toggleFullscreen);
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# Controllo automatico dei nuovi dati
-current_time = time.time()
-if current_time - st.session_state.last_check_time > 10:
-    try:
-        new_df = get_sheet_data()
-        new_count = len(new_df)
-        
-        if new_count > st.session_state.spiral_count:
-            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
-            st.session_state.sheet_data = new_df
-            st.session_state.spiral_count = new_count
-            st.session_state.last_data_hash = get_data_hash(new_df)
-            st.session_state.current_spirals = generate_spirals(new_df)
-            st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state.update_trigger += 1
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"Errore durante il controllo: {e}")
-    
-    st.session_state.last_check_time = current_time
-
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA AVANZATO CANVAS 2D")
+st.markdown("## 🎯 SISTEMA AUTO-AGGIORNAMENTO")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Spirali Totali", st.session_state.spiral_count)
+    next_check = st.session_state.last_check_time + st.session_state.auto_check_interval
+    time_left = max(0, next_check - time.time())
+    st.metric("Prossimo controllo", f"{int(time_left)}s")
     st.info(f"""
     **✨ Sistema ATTIVO**
-    - Spirali visualizzate: {st.session_state.spiral_count}
+    - Controllo ogni {st.session_state.auto_check_interval}s
     - Ultimo aggiornamento: {st.session_state.last_update_time}
     - Sfondo nero garantito
-    - Schermo intero funzionante
     """)
 
 with col2:
@@ -446,48 +456,53 @@ with col2:
     st.metric("Stato", status)
     st.info("""
     **🔧 Tecnologia:**
+    - Controllo automatico ogni 15s
+    - Refresh automatico quando nuovi dati
     - Canvas 2D nativo
-    - Render diretto senza Plotly
-    - Sfondo nero permanente
-    - Performance ottimizzata
+    - Schermo intero funzionante
     """)
 
 # Pulsante di aggiornamento manuale
 if st.button("🔄 Controlla nuovi dati ora", type="primary"):
     new_df = get_sheet_data()
     new_count = len(new_df)
-    if new_count > st.session_state.spiral_count:
+    new_hash = get_data_hash(new_df)
+    
+    if new_hash != st.session_state.last_data_hash:
         st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
         st.session_state.sheet_data = new_df
         st.session_state.spiral_count = new_count
-        st.session_state.last_data_hash = get_data_hash(new_df)
+        st.session_state.last_data_hash = new_hash
         st.session_state.current_spirals = generate_spirals(new_df)
         st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
         st.session_state.update_trigger += 1
+        st.session_state.last_check_time = time.time()
         st.rerun()
     else:
         st.info("📭 Nessun nuovo questionario trovato.")
+        st.session_state.last_check_time = time.time()
+
+# Configurazione intervallo di controllo
+st.slider("Intervallo di controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5, 
+          key="auto_check_interval", help="Imposta ogni quanti secondi controllare nuovi dati")
 
 # Istruzioni
 st.markdown("---")
 st.success("""
 **✅ Istruzioni:**
 - **Doppio click** sulla visualizzazione per schermo intero
-- **Click sul pulsante ⛶** in alto a destra per schermo intero
+- **Click sul pulsante ⛶** per schermo intero
 - **ESC** per uscire dallo schermo intero
-- Lo **sfondo è nero** permanente
-- Il sistema controlla nuovi dati ogni 10 secondi
+- Il sistema controlla automaticamente ogni 15 secondi
+- I nuovi dati appariranno automaticamente
 """)
 
-# JavaScript per forzare l'aggiornamento
+# JavaScript per forzare l'aggiornamento se necessario
 st.markdown(f"""
 <script>
 // Forza l'aggiornamento se ci sono nuovi dati
 if (window.updateTrigger !== {st.session_state.update_trigger}) {{
-    window.updateTrigger = {st.session_state.update_trigger};
-    setTimeout(() => {{
-        window.location.reload();
-    }}, 100);
+    window.location.reload();
 }}
 </script>
 """, unsafe_allow_html=True)
