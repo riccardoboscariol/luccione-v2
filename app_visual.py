@@ -8,7 +8,6 @@ import time
 import colorsys
 import hashlib
 from datetime import datetime
-import threading
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
@@ -37,7 +36,7 @@ st.markdown("""
 
 # Funzione per desaturare i colori
 def fade_color(hex_color, fade_factor):
-    """Desatura un colore in base al fattore de fade (0-1)"""
+    """Desatura un colore in base al fattore di fade (0-1)"""
     try:
         hex_color = hex_color.lstrip('#')
         rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
@@ -62,8 +61,6 @@ if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = time.time()
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-if 'new_spirals_data' not in st.session_state:
-    st.session_state.new_spirals_data = []
 if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
 
@@ -163,28 +160,31 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con aggiornamento in tempo reale
+# 📊 HTML + JS con Canvas 2D personalizzato
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 body {{
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background: black;
+    background: #000000;
+    font-family: Arial, sans-serif;
 }}
-#graph-container {{
+#container {{
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: black;
+    background: #000000;
 }}
-#graph {{
+#canvas {{
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
 }}
@@ -192,25 +192,25 @@ body {{
     position: fixed;
     top: 15px;
     left: 15px;
-    z-index: 10000;
-    background: rgba(0,0,0,0.8);
-    color: white;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.8);
+    color: #ffffff;
     padding: 10px 15px;
     border-radius: 8px;
-    font-family: monospace;
     font-size: 14px;
-    border: 1px solid rgba(255,255,255,0.2);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(5px);
 }}
 #logo {{
     position: fixed;
     bottom: 20px;
     right: 20px;
-    z-index: 10000;
+    z-index: 1000;
     width: 60px;
     height: 60px;
     border-radius: 10px;
-    border: 1px solid rgba(255,255,255,0.3);
-    box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
     opacity: 0.9;
     object-fit: cover;
     transition: all 0.3s ease;
@@ -219,132 +219,151 @@ body {{
     transform: scale(1.1);
     opacity: 1;
 }}
+#fullscreen-btn {{
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    backdrop-filter: blur(5px);
+}}
+#fullscreen-btn:hover {{
+    background: rgba(255, 255, 255, 0.2);
+}}
 .pulse {{
     animation: pulse 2s infinite;
 }}
 @keyframes pulse {{
-    0% {{ box-shadow: 0 0 0 0 rgba(255,255,255,0.4); }}
-    70% {{ box-shadow: 0 0 0 10px rgba(255,255,255,0); }}
-    100% {{ box-shadow: 0 0 0 0 rgba(255,255,255,0); }}
-}}
-.new-spiral {{
-    filter: brightness(2) drop-shadow(0 0 10px #ffffff);
-    transition: all 2s ease-out;
+    0% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }}
+    70% {{ box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }}
+    100% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }}
 }}
 </style>
 </head>
 <body>
-<div id="graph-container">
+<div id="container">
+    <canvas id="canvas"></canvas>
     <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
+    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
-    <div id="graph"></div>
 </div>
 
 <script>
+// Dati iniziali
 let currentData = {initial_data_json};
-let t0 = Date.now();
+let spirals = currentData.spirali || [];
 let currentSpiralCount = {st.session_state.spiral_count};
 let lastUpdateTrigger = {st.session_state.update_trigger};
-let plotlyGraph = null;
-let isInitialized = false;
 
-// Funzione per inizializzare il grafico
-function initializePlot() {{
-    if (isInitialized) return;
+// Elementi DOM
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusElement = document.getElementById('status');
+
+// Variabili di rendering
+let t0 = Date.now();
+let animationId = null;
+let isFullscreen = false;
+
+// Inizializzazione canvas
+function initCanvas() {{
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     
-    const layout = {{
-        xaxis: {{visible: false, range: [-10, 10]}},
-        yaxis: {{visible: false, range: [-10, 10]}},
-        margin: {{t:0, b:0, l:0, r:0}},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        autosize: true,
-        showlegend: false
-    }};
-    
-    Plotly.newPlot('graph', [], layout, {{
-        displayModeBar: false,
-        staticPlot: false,
-        responsive: true
-    }}).then(function() {{
-        isInitialized = true;
-        render();
-    }});
+    // Sfondo nero permanente
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 }}
 
-// Funzione principale di rendering
+// Funzione di rendering
 function render() {{
-    if (!isInitialized) {{
-        requestAnimationFrame(render);
-        return;
-    }}
+    const currentTime = Date.now();
+    const elapsedTime = (currentTime - t0) / 1000;
     
-    try {{
-        const time = (Date.now() - t0) / 1000;
-        const traces = [];
+    // Pulisci il canvas con sfondo nero
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = Math.min(canvas.width, canvas.height) / 20;
+    
+    // Renderizza ogni spirale
+    spirals.forEach(spiral => {{
+        if (!spiral.x || !spiral.y) return;
         
-        currentData.spirali.forEach(spiral => {{
-            if (!spiral.x || !spiral.y) return;
+        const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * elapsedTime);
+        const baseAlpha = spiral.intensity * 0.8;
+        
+        ctx.beginPath();
+        
+        for (let i = 0; i < spiral.x.length; i += 2) {{
+            if (i >= spiral.x.length || i >= spiral.y.length) continue;
             
-            const step = 3;
-            const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * time);
+            const x = centerX + spiral.x[i] * scale;
+            const y = centerY + spiral.y[i] * scale;
             
-            for (let j = 1; j < spiral.x.length; j += step) {{
-                if (j >= spiral.x.length || j >= spiral.y.length) continue;
-                
-                const segmentProgress = j / spiral.x.length;
-                const alpha = (0.2 + 0.8 * segmentProgress) * flicker;
-                const width = 1 + spiral.intensity * 4;
-                
-                let color = spiral.color;
-                if (spiral.is_new) {{
-                    const pulse = 0.5 + 0.5 * Math.sin(time * 8);
-                    color = `rgb(${{255 * pulse}}, ${{255 * pulse}}, 255)`;
-                }}
-                
-                traces.push({{
-                    x: [spiral.x[j-1], spiral.x[j]],
-                    y: [spiral.y[j-1], spiral.y[j]],
-                    mode: 'lines',
-                    line: {{
-                        color: color,
-                        width: width,
-                        shape: 'spline'
-                    }},
-                    opacity: Math.max(0.1, Math.min(1, alpha)),
-                    hoverinfo: 'skip',
-                    showlegend: false
-                }});
+            if (i === 0) {{
+                ctx.moveTo(x, y);
+            }} else {{
+                ctx.lineTo(x, y);
             }}
-        }});
+        }}
         
-        // Aggiorna il grafico senza cancellarlo
-        Plotly.react('graph', traces, {{
-            xaxis: {{range: [-10, 10]}},
-            yaxis: {{range: [-10, 10]}}
-        }});
+        // Effetto per nuove spirali
+        let lineWidth = 1 + spiral.intensity * 3;
+        let glowColor = spiral.color;
         
-    }} catch (error) {{
-        console.log('Render error:', error);
-    }}
+        if (spiral.is_new) {{
+            const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 8);
+            lineWidth *= (1 + pulse);
+            glowColor = `rgb(${{255}}, ${{255}}, 255)`;
+        }}
+        
+        ctx.strokeStyle = glowColor;
+        ctx.lineWidth = lineWidth;
+        ctx.globalAlpha = baseAlpha * flicker;
+        ctx.stroke();
+    }});
     
-    requestAnimationFrame(render);
+    ctx.globalAlpha = 1;
+    animationId = requestAnimationFrame(render);
 }}
 
-// Controlla aggiornamenti dal server
+// Schermo intero
+function toggleFullscreen() {{
+    if (!document.fullscreenElement) {{
+        document.documentElement.requestFullscreen().catch(err => {{
+            console.log('Error attempting to enable fullscreen:', err);
+        }});
+    }} else {{
+        document.exitFullscreen();
+    }}
+}}
+
+// Gestione resize
+function handleResize() {{
+    initCanvas();
+}}
+
+// Controlla aggiornamenti
 function checkForUpdates() {{
     try {{
-        // Usa un approccio diverso: verifica se la pagina è stata aggiornata
-        if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
+        if (window.updateTrigger !== lastUpdateTrigger) {{
             lastUpdateTrigger = window.updateTrigger;
-            document.getElementById('status').textContent = 
-                "Nuove spirali! Aggiornamento...";
-            document.getElementById('status').classList.add('pulse');
+            statusElement.textContent = "Nuove spirali! Aggiornamento...";
+            statusElement.classList.add('pulse');
             
-            // Ricarica solo i dati, non tutta la pagina
+            // Ricarica delicata
             setTimeout(() => {{
                 window.location.reload();
-            }}, 1000);
+            }}, 1500);
         }}
     }} catch (error) {{
         console.log('Update check error:', error);
@@ -353,23 +372,28 @@ function checkForUpdates() {{
 
 // Inizializzazione
 window.addEventListener('load', function() {{
-    initializePlot();
-    setInterval(checkForUpdates, 2000);
-    document.getElementById('status').textContent = 
-        "Spirali: " + currentSpiralCount + " | Sistema pronto";
+    initCanvas();
+    render();
+    
+    // Controllo aggiornamenti ogni 3 secondi
+    setInterval(checkForUpdates, 3000);
+    
+    statusElement.textContent = `Spirali: ${{currentSpiralCount}} | Sistema pronto`;
 }});
 
-// Supporto schermo intero
-document.addEventListener('dblclick', function() {{
-    if (!document.fullscreenElement) {{
-        document.documentElement.requestFullscreen().catch(console.log);
-    }} else {{
-        document.exitFullscreen().catch(console.log);
-    }}
+window.addEventListener('resize', handleResize);
+
+// Eventi fullscreen
+document.addEventListener('fullscreenchange', () => {{
+    isFullscreen = !!document.fullscreenElement;
+    setTimeout(handleResize, 100);
 }});
 
-// Esponi il trigger per gli aggiornamenti
+// Esponi il trigger per aggiornamenti
 window.updateTrigger = {st.session_state.update_trigger};
+
+// Doppio click per fullscreen
+canvas.addEventListener('dblclick', toggleFullscreen);
 </script>
 </body>
 </html>
@@ -380,13 +404,13 @@ st.components.v1.html(html_code, height=800, scrolling=False)
 
 # Controllo automatico dei nuovi dati
 current_time = time.time()
-if current_time - st.session_state.last_check_time > 15:
+if current_time - st.session_state.last_check_time > 10:
     try:
         new_df = get_sheet_data()
         new_count = len(new_df)
         
         if new_count > st.session_state.spiral_count:
-            st.session_state.new_spirals_data = new_df.iloc[st.session_state.spiral_count:].to_dict('records')
+            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
             st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = get_data_hash(new_df)
@@ -402,7 +426,7 @@ if current_time - st.session_state.last_check_time > 15:
 
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA AVANZATO")
+st.markdown("## 🎯 SISTEMA AVANZATO CANVAS 2D")
 
 col1, col2 = st.columns(2)
 
@@ -412,7 +436,8 @@ with col1:
     **✨ Sistema ATTIVO**
     - Spirali visualizzate: {st.session_state.spiral_count}
     - Ultimo aggiornamento: {st.session_state.last_update_time}
-    - Controllo automatico ogni 15s
+    - Sfondo nero garantito
+    - Schermo intero funzionante
     """)
 
 with col2:
@@ -420,10 +445,10 @@ with col2:
     st.metric("Stato", status)
     st.info("""
     **🔧 Tecnologia:**
-    - Render diretto in JavaScript
-    - Doppio click per schermo intero
-    - Aggiornamenti smooth
-    - Nessun refresh visibile
+    - Canvas 2D nativo
+    - Render diretto senza Plotly
+    - Sfondo nero permanente
+    - Performance ottimizzata
     """)
 
 # Pulsante di aggiornamento manuale
@@ -447,9 +472,10 @@ st.markdown("---")
 st.success("""
 **✅ Istruzioni:**
 - **Doppio click** sulla visualizzazione per schermo intero
-- Il sistema controlla automaticamente nuovi dati ogni 15 secondi
-- Nuove spirali appariranno senza refresh della pagina
-- Schermo intero completamente funzionante
+- **Click sul pulsante ⛶** in alto a destra per schermo intero
+- **ESC** per uscire dallo schermo intero
+- Lo **sfondo è nero** permanente
+- Il sistema controlla nuovi dati ogni 10 secondi
 """)
 
 # JavaScript per forzare l'aggiornamento
