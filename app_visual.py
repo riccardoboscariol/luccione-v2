@@ -58,11 +58,13 @@ if 'current_spirals' not in st.session_state:
 if 'spiral_count' not in st.session_state:
     st.session_state.spiral_count = 0
 if 'last_check_time' not in st.session_state:
-    st.session_state.last_check_time = 0
+    st.session_state.last_check_time = time.time()
 if 'last_update_time' not in st.session_state:
-    st.session_state.last_update_time = datetime.now().isoformat()
+    st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
 if 'auto_reload' not in st.session_state:
     st.session_state.auto_reload = True
+if 'page_loaded_time' not in st.session_state:
+    st.session_state.page_loaded_time = time.time()
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -157,7 +159,7 @@ FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-
 
 # Controlla se ci sono nuovi dati (sul lato server)
 current_time = time.time()
-if current_time - st.session_state.last_check_time > 15:  # Controlla ogni 15 secondi
+if current_time - st.session_state.last_check_time > 10:  # Controlla ogni 10 secondi
     new_df = get_sheet_data()
     new_hash = get_data_hash(new_df)
     
@@ -166,11 +168,15 @@ if current_time - st.session_state.last_check_time > 15:  # Controlla ogni 15 se
         st.session_state.spiral_count = len(new_df)
         st.session_state.last_data_hash = new_hash
         st.session_state.current_spirals = generate_spirals(new_df)
-        st.session_state.last_update_time = datetime.now().isoformat()
+        st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
         st.session_state.last_check_time = current_time
         st.rerun()
     
     st.session_state.last_check_time = current_time
+
+# Calcola il tempo rimanente per il prossimo aggiornamento
+next_update_seconds = 30 - (time.time() - st.session_state.page_loaded_time) % 30
+next_update_time = (datetime.now() + pd.Timedelta(seconds=next_update_seconds)).strftime("%H:%M:%S")
 
 # Preparazione dati per il frontend
 spirals_data = {
@@ -262,7 +268,7 @@ html_code = f"""
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <div id="status">Spirali: {st.session_state.spiral_count} | Ultimo aggiornamento: {st.session_state.last_update_time.split('.')[0].replace('T', ' ')}</div>
+    <div id="status">Spirali: {st.session_state.spiral_count} | Ultimo agg.: {st.session_state.last_update_time}</div>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
     <div id="graph"></div>
 </div>
@@ -271,10 +277,20 @@ html_code = f"""
 let currentData = {initial_data_json};
 let t0 = Date.now();
 let currentSpiralCount = {st.session_state.spiral_count};
+let nextReloadTime = Date.now() + 30000; // 30 secondi da ora
 
-function updateSpiralCount() {{
-    document.getElementById('status').textContent = 
-        "Spirali: " + currentSpiralCount + " | Aggiornato: " + new Date().toLocaleTimeString();
+function updateStatus() {{
+    const now = Date.now();
+    const timeLeft = Math.round((nextReloadTime - now) / 1000);
+    const statusElement = document.getElementById('status');
+    
+    if (timeLeft > 0) {{
+        statusElement.textContent = 
+            `Spirali: ${{currentSpiralCount}} | Prossimo agg.: ${{timeLeft}}s`;
+    }} else {{
+        statusElement.textContent = 
+            "Aggiornamento in corso...";
+    }}
 }}
 
 function toggleFullscreen() {{
@@ -291,19 +307,14 @@ function toggleFullscreen() {{
 function buildTraces(time){{
     const traces = [];
     
+    if (!currentData.spirali) return traces;
+    
     currentData.spirali.forEach(s => {{
         const step = 4;
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
         let glowEffect = 0;
         let glowColor = s.color;
-        
-        // Effetto per nuove spirale
-        if (s.is_new) {{
-            const pulseTime = (Date.now() - t0) / 1000;
-            glowEffect = 3 + 2 * Math.sin(pulseTime * 10);
-            glowColor = '#ffffff';
-        }}
         
         for(let j = 1; j < s.x.length; j += step){{
             const segmentProgress = j / s.x.length;
@@ -356,6 +367,14 @@ function render(){{
 t0 = Date.now();
 render();
 
+// Aggiorna il contatore ogni secondo
+setInterval(updateStatus, 1000);
+
+// Auto-ricarica dopo 30 secondi
+setTimeout(() => {{
+    window.location.reload();
+}}, 30000);
+
 // Gestione fullscreen
 document.addEventListener('fullscreenchange', () => {{
     const logo = document.getElementById('logo');
@@ -367,12 +386,6 @@ document.addEventListener('fullscreenchange', () => {{
         logo.style.height = '60px';
     }}
 }});
-
-// Auto-ricarica ogni 30 secondi per controllare nuovi dati
-setTimeout(() => {{
-    console.log("Auto-ricarica per controllare nuovi dati...");
-    window.location.reload();
-}}, 30000);
 </script>
 </body>
 </html>
@@ -389,12 +402,12 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Spirali Totali", st.session_state.spiral_count, delta=None)
-    st.info("""
+    st.info(f"""
     **✨ Auto-aggiornamento ATTIVO**
-    - Controllo ogni 15 secondi (lato server)
-    - Ricarica automatica ogni 30 secondi
-    - Contatore in tempo reale
-    - Funziona anche a schermo intero
+    - Controllo dati ogni 10 secondi
+    - Prossimo aggiornamento: {next_update_time}
+    - {next_update_seconds:.0f} secondi rimanenti
+    - Funziona a schermo intero
     """)
 
 with col2:
@@ -402,7 +415,7 @@ with col2:
     st.metric("Stato Sistema", status)
     st.info("""
     **🔧 Tecnologia:**
-    - Controllo lato server ogni 15 secondi
+    - Controllo lato server ogni 10 secondi
     - Auto-ricarica ogni 30 secondi
     - Collegamento diretto al Google Sheet
     - Supporto schermo intero
@@ -410,8 +423,8 @@ with col2:
 
 st.markdown("---")
 st.success(f"""
-**✅ Sistema attivo!** Ultimo aggiornamento: {st.session_state.last_update_time.split('.')[0].replace('T', ' ')}
-La pagina si ricaricherà automaticamente ogni 30 secondi per controllare nuovi dati.
+**✅ Sistema attivo!** Ultimo aggiornamento: {st.session_state.last_update_time}
+La pagina si ricaricherà automaticamente tra {next_update_seconds:.0f} secondi per controllare nuovi dati.
 """)
 
 # Aggiungi un pulsante per forzare il controllo manuale
@@ -424,26 +437,26 @@ if st.button("🔍 Controlla manualmente nuovi dati"):
         st.session_state.spiral_count = new_count
         st.session_state.last_data_hash = get_data_hash(new_df)
         st.session_state.current_spirals = generate_spirals(new_df)
-        st.session_state.last_update_time = datetime.now().isoformat()
+        st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
+        st.session_state.last_check_time = time.time()
         st.rerun()
     else:
         st.info("Nessun nuovo questionario trovato.")
 
-# Pulsante per disattivare/attivare auto-ricarica
-if st.button("⏸️ Pausa auto-aggiornamento" if st.session_state.auto_reload else "▶️ Riprendi auto-aggiornamento"):
-    st.session_state.auto_reload = not st.session_state.auto_reload
+# Pulsante per forzare il reload
+if st.button("🔄 Ricarica ora"):
+    st.session_state.page_loaded_time = time.time()
     st.rerun()
 
-# Aggiungi JavaScript per auto-ricaricare la pagina (se attivo)
-if st.session_state.auto_reload:
-    st.markdown("""
-    <script>
-    // Auto-ricarica ogni 30 secondi
-    setTimeout(function() {
-        window.location.reload();
-    }, 30000);
-    </script>
-    """, unsafe_allow_html=True)
+# Note importanti
+st.markdown("---")
+st.warning("""
+**⚠️ Note importanti:**
+1. L'aggiornamento avviene ogni 30 secondi
+2. I nuovi questionari appariranno dopo il prossimo aggiornamento
+3. Lo schermo diventerà nero momentaneamente durante il refresh
+4. La visualizzazione a schermo intero verrà mantenuta dopo il refresh
+""")
 
 
 
