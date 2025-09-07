@@ -154,30 +154,8 @@ initial_data_json = json.dumps({"spirali": spirali, "count": initial_count})
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# Endpoint API per verificare gli aggiornamenti
-st.markdown("""
-<script>
-// Funzione per verificare gli aggiornamenti
-async function checkForUpdates() {
-    try {
-        const response = await fetch('/proxy?_=' + new Date().getTime(), {
-            method: 'GET',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Errore nel check aggiornamenti:', error);
-        return { count: 0, updated: false };
-    }
-}
-</script>
-""", unsafe_allow_html=True)
-
 # Aggiungiamo un endpoint per il check degli aggiornamenti
-if st.query_params.get('_check') == 'update':
+if "check_update" in st.query_params:
     current_df = get_sheet_data()
     current_count = len(current_df)
     updated = current_count > st.session_state.spiral_count
@@ -296,58 +274,58 @@ async function checkForNewSpirals() {{
     
     try {{
         // Chiamata API per verificare aggiornamenti
-                const response = await fetch('/?_check=update&_=' + new Date().getTime(), {
+        const response = await fetch('/?check_update=true&_=' + new Date().getTime(), {{
             method: 'GET',
-            headers: {
+            headers: {{
                 'X-Requested-With': 'XMLHttpRequest',
                 'Cache-Control': 'no-cache'
-            }
-        });
+            }}
+        }});
         
-        if (response.ok) {
+        if (response.ok) {{
             const data = await response.json();
             
-            if (data.updated && data.count > currentSpiralCount) {
+            if (data.updated && data.count > currentSpiralCount) {{
                 // Ricarica la pagina per vedere le nuove spirali
                 document.getElementById('status').textContent = 
                     "Nuove spirali trovate! Ricarico...";
-                setTimeout(() => {
+                setTimeout(() => {{
                     window.location.reload();
-                }, 1000);
-            } else {
+                }}, 1000);
+            }} else {{
                 document.getElementById('status').textContent = 
                     "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
-            }
-        }
-    } catch (error) {
+            }}
+        }}
+    }} catch (error) {{
         console.log('Check automatico:', error);
         document.getElementById('status').textContent = 
             "Spirali: " + currentSpiralCount + " | Errore nel check";
-    } finally {
+    }} finally {{
         isChecking = false;
-    }
-}
+    }}
+}}
 
-function updateSpiralCount() {
+function updateSpiralCount() {{
     document.getElementById('status').textContent = 
         "Spirali: " + currentSpiralCount + " | Aggiornato: " + new Date().toLocaleTimeString();
-}
+}}
 
-function toggleFullscreen() {
+function toggleFullscreen() {{
     const container = document.getElementById('graph-container');
-    if (!document.fullscreenElement) {
-        container.requestFullscreen().catch(() => {});
-    } else {
-        if (document.exitFullscreen) {
+    if (!document.fullscreenElement) {{
+        container.requestFullscreen().catch(() => {{}});
+    }} else {{
+        if (document.exitFullscreen) {{
             document.exitFullscreen();
-        }
-    }
-}
+        }}
+    }}
+}}
 
-function buildTraces(time){
+function buildTraces(time){{
     const traces = [];
     
-    currentData.spirali.forEach(s => {
+    currentData.spirali.forEach(s => {{
         const step = 4;
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
@@ -355,58 +333,58 @@ function buildTraces(time){
         let glowColor = s.color;
         
         // Effetto per nuove spirale
-        if (s.is_new) {
+        if (s.is_new) {{
             const pulseTime = (Date.now() - t0) / 1000;
             glowEffect = 3 + 2 * Math.sin(pulseTime * 10);
             glowColor = '#ffffff';
-        }
+        }}
         
-        for(let j = 1; j < s.x.length; j += step){
+        for(let j = 1; j < s.x.length; j += step){{
             const segmentProgress = j / s.x.length;
             const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
             
-            traces.push({
+            traces.push({{
                 x: s.x.slice(j-1, j+1),
                 y: s.y.slice(j-1, j+1),
                 mode: "lines",
-                line: {
+                line: {{
                     color: glowColor, 
                     width: 1.5 + s.intensity * 3 + glowEffect,
                     shape: 'spline'
-                },
+                }},
                 opacity: Math.max(0, alpha),
                 hoverinfo: "none",
                 showlegend: false,
                 type: "scatter"
-            });
-        }
-    });
+            }});
+        }}
+    }});
     
     return traces;
-}
+}}
 
-function render(){
+function render(){{
     const time = (Date.now() - t0) / 1000;
     const traces = buildTraces(time);
     
-    const layout = {
-        xaxis: {visible: false, autorange: true, scaleanchor: 'y'},
-        yaxis: {visible: false, autorange: true},
-        margin: {t:0,b:0,l:0,r:0},
+    const layout = {{
+        xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
+        yaxis: {{visible: false, autorange: true}},
+        margin: {{t:0,b:0,l:0,r:0}},
         paper_bgcolor: 'black',
         plot_bgcolor: 'black',
         autosize: true
-    };
+    }};
     
-    Plotly.react('graph', traces, layout, {
+    Plotly.react('graph', traces, layout, {{
         displayModeBar: false,
         scrollZoom: false,
         responsive: true,
         staticPlot: false
-    });
+    }});
     
     requestAnimationFrame(render);
-}
+}}
 
 // Inizia il rendering e il polling
 t0 = Date.now();
@@ -419,21 +397,21 @@ checkInterval = setInterval(checkForNewSpirals, 5000);
 setTimeout(checkForNewSpirals, 1000);
 
 // Gestione fullscreen
-document.addEventListener('fullscreenchange', () => {
+document.addEventListener('fullscreenchange', () => {{
     const logo = document.getElementById('logo');
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement) {{
         logo.style.width = '80px';
         logo.style.height = '80px';
-    } else {
+    }} else {{
         logo.style.width = '60px';
         logo.style.height = '60px';
-    }
-});
+    }}
+}});
 
 // Pulizia
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', () => {{
     clearInterval(checkInterval);
-});
+}});
 </script>
 </body>
 </html>
@@ -505,5 +483,6 @@ if st.button("🔍 Controlla manualmente nuovi dati"):
         st.rerun()
     else:
         st.info("Nessun nuovo questionario trovato.")
+
 
 
