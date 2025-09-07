@@ -7,6 +7,7 @@ import json
 import time
 import colorsys
 import hashlib
+from datetime import datetime
 
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
@@ -58,6 +59,8 @@ if 'spiral_count' not in st.session_state:
     st.session_state.spiral_count = 0
 if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = 0
+if 'last_update_time' not in st.session_state:
+    st.session_state.last_update_time = datetime.now().isoformat()
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -125,10 +128,10 @@ def generate_spirals(df):
             "base_color": base_color
         })
 
-    # Calcolo offset originale
+    # Calcolo offset originale - CORREZIONE ERRORE DI SINTASSI
     if spirali:
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-        y_min, y_max = all_y.min(), y_max = all_y.max()
+        y_min, y_max = all_y.min(), all_y.max()  # Correzione qui
         y_range = y_max - y_min
         OFFSET = -0.06 * y_range
         for s in spirali: 
@@ -150,6 +153,47 @@ initial_data_json = json.dumps({"spirali": spirali, "count": initial_count})
 
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
+
+# Endpoint API per verificare gli aggiornamenti
+st.markdown("""
+<script>
+// Funzione per verificare gli aggiornamenti
+async function checkForUpdates() {
+    try {
+        const response = await fetch('/proxy?_=' + new Date().getTime(), {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Errore nel check aggiornamenti:', error);
+        return { count: 0, updated: false };
+    }
+}
+</script>
+""", unsafe_allow_html=True)
+
+# Aggiungiamo un endpoint per il check degli aggiornamenti
+if st.query_params.get('_check') == 'update':
+    current_df = get_sheet_data()
+    current_count = len(current_df)
+    updated = current_count > st.session_state.spiral_count
+    
+    if updated:
+        st.session_state.sheet_data = current_df
+        st.session_state.spiral_count = current_count
+        st.session_state.current_spirals = generate_spirals(current_df)
+        st.session_state.last_update_time = datetime.now().isoformat()
+    
+    st.json({
+        "count": current_count,
+        "updated": updated,
+        "last_update": st.session_state.last_update_time
+    })
+    st.stop()
 
 # 📊 HTML + JS con AUTO-AGGIORNAMENTO REALE
 html_code = f"""
@@ -251,118 +295,59 @@ async function checkForNewSpirals() {{
     isChecking = true;
     
     try {{
-        // Chiamata al server per verificare nuovi dati
-        const response = await fetch(window.location.href, {{
+        // Chiamata API per verificare aggiornamenti
+                const response = await fetch('/?_check=update&_=' + new Date().getTime(), {
             method: 'GET',
-            headers: {{
-                'Cache-Control': 'no-cache',
-                'X-Requested-With': 'XMLHttpRequest'
-            }}
-        }});
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Cache-Control': 'no-cache'
+            }
+        });
         
-        const text = await response.text();
-        
-        // Estrai il nuovo conteggio dalla pagina
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const countElement = doc.querySelector('[data-testid="stMetricValue"]');
-        const newCount = countElement ? parseInt(countElement.textContent) : currentSpiralCount;
-        
-        if (newCount > currentSpiralCount) {{
-            const newSpirals = [];
-            for (let i = currentSpiralCount; i < newCount; i++) {{
-                const newSpiral = createNewSpiral(i);
-                newSpirals.push(newSpiral);
-                currentData.spirali.push(newSpiral);
-            }}
+        if (response.ok) {
+            const data = await response.json();
             
-            currentSpiralCount = newCount;
-            
-            // Aggiorna il contatore
-            updateSpiralCount();
-            
-            // Mostra effetto visivo
-            highlightNewSpirals(newSpirals);
-            
-            // Forza il re-rendering completo
-            t0 = Date.now();
-        }}
-        
-        document.getElementById('status').textContent = 
-            "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
-            
-    }} catch (error) {{
+            if (data.updated && data.count > currentSpiralCount) {
+                // Ricarica la pagina per vedere le nuove spirali
+                document.getElementById('status').textContent = 
+                    "Nuove spirali trovate! Ricarico...";
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                document.getElementById('status').textContent = 
+                    "Spirali: " + currentSpiralCount + " | Ultimo check: " + new Date().toLocaleTimeString();
+            }
+        }
+    } catch (error) {
         console.log('Check automatico:', error);
-    }} finally {{
+        document.getElementById('status').textContent = 
+            "Spirali: " + currentSpiralCount + " | Errore nel check";
+    } finally {
         isChecking = false;
-    }}
-}}
+    }
+}
 
-function createNewSpiral(id) {{
-    const palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"];
-    const theta = Array.from({{length: 1200}}, (_, i) => i * 12 * Math.PI / 1200);
-    
-    const media = 3 + Math.random() * 2;
-    const size_factor = media / 5;
-    const intensity = Math.max(0.2, Math.min(1.0, size_factor));
-    const freq = 0.5 + size_factor * 2.5;
-    
-    const r = 0.3 + id * 0.08;
-    const radius = theta.map(t => r * (t / Math.max(...theta)) * intensity * 4.5);
-    
-    const x = radius.map((r, i) => r * Math.cos(theta[i] + id));
-    const y = radius.map((r, i) => r * Math.sin(theta[i] + id));
-    
-    let y_proj;
-    if (id % 2 === 0) {{
-        y_proj = y.map((y_val, i) => y_val * 0.5 + x[i] * 0.2);
-    }} else {{
-        y_proj = y.map((y_val, i) => y_val * 0.5 - x[i] * 0.2);
-    }}
-    
-    const base_color = palette[id % palette.length];
-    
-    return {{
-        x: x,
-        y: y_proj,
-        color: base_color,
-        intensity: intensity,
-        freq: freq,
-        id: id,
-        base_color: base_color,
-        is_new: true
-    }};
-}}
-
-function highlightNewSpirals(newSpirals) {{
-    newSpirals.forEach(spiral => {{
-        spiral.is_new = true;
-        setTimeout(() => {{
-            spiral.is_new = false;
-        }}, 2000);
-    }});
-}}
-
-function updateSpiralCount() {{
+function updateSpiralCount() {
     document.getElementById('status').textContent = 
         "Spirali: " + currentSpiralCount + " | Aggiornato: " + new Date().toLocaleTimeString();
-}}
+}
 
-function toggleFullscreen() {{
+function toggleFullscreen() {
     const container = document.getElementById('graph-container');
-    if (!document.fullscreenElement) {{
-        container.requestFullscreen().catch(() => {{}});
-    }} else {{
-        if (document.exitFullscreen) {{
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(() => {});
+    } else {
+        if (document.exitFullscreen) {
             document.exitFullscreen();
-        }}
-    }}
-}}
+        }
+    }
+}
 
-function buildTraces(time){{
+function buildTraces(time){
     const traces = [];
     
-    currentData.spirali.forEach(s => {{
+    currentData.spirali.forEach(s => {
         const step = 4;
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
@@ -370,85 +355,85 @@ function buildTraces(time){{
         let glowColor = s.color;
         
         // Effetto per nuove spirale
-        if (s.is_new) {{
+        if (s.is_new) {
             const pulseTime = (Date.now() - t0) / 1000;
             glowEffect = 3 + 2 * Math.sin(pulseTime * 10);
             glowColor = '#ffffff';
-        }}
+        }
         
-        for(let j = 1; j < s.x.length; j += step){{
+        for(let j = 1; j < s.x.length; j += step){
             const segmentProgress = j / s.x.length;
             const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
             
-            traces.push({{
+            traces.push({
                 x: s.x.slice(j-1, j+1),
                 y: s.y.slice(j-1, j+1),
                 mode: "lines",
-                line: {{
+                line: {
                     color: glowColor, 
                     width: 1.5 + s.intensity * 3 + glowEffect,
                     shape: 'spline'
-                }},
+                },
                 opacity: Math.max(0, alpha),
                 hoverinfo: "none",
                 showlegend: false,
                 type: "scatter"
-            }});
-        }}
-    }});
+            });
+        }
+    });
     
     return traces;
-}}
+}
 
-function render(){{
+function render(){
     const time = (Date.now() - t0) / 1000;
     const traces = buildTraces(time);
     
-    const layout = {{
-        xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
-        yaxis: {{visible: false, autorange: true}},
-        margin: {{t:0,b:0,l:0,r:0}},
+    const layout = {
+        xaxis: {visible: false, autorange: true, scaleanchor: 'y'},
+        yaxis: {visible: false, autorange: true},
+        margin: {t:0,b:0,l:0,r:0},
         paper_bgcolor: 'black',
         plot_bgcolor: 'black',
         autosize: true
-    }};
+    };
     
-    Plotly.react('graph', traces, layout, {{
+    Plotly.react('graph', traces, layout, {
         displayModeBar: false,
         scrollZoom: false,
         responsive: true,
         staticPlot: false
-    }});
+    });
     
     requestAnimationFrame(render);
-}}
+}
 
 // Inizia il rendering e il polling
 t0 = Date.now();
 render();
 
-// Avvia il polling ogni 3 secondi
-checkInterval = setInterval(checkForNewSpirals, 3000);
+// Avvia il polling ogni 5 secondi
+checkInterval = setInterval(checkForNewSpirals, 5000);
 
 // Prima esecuzione immediata
 setTimeout(checkForNewSpirals, 1000);
 
 // Gestione fullscreen
-document.addEventListener('fullscreenchange', () => {{
+document.addEventListener('fullscreenchange', () => {
     const logo = document.getElementById('logo');
-    if (document.fullscreenElement) {{
+    if (document.fullscreenElement) {
         logo.style.width = '80px';
         logo.style.height = '80px';
-    }} else {{
+    } else {
         logo.style.width = '60px';
         logo.style.height = '60px';
-    }}
-}});
+    }
+});
 
 // Pulizia
-window.addEventListener('beforeunload', () => {{
+window.addEventListener('beforeunload', () => {
     clearInterval(checkInterval);
-}});
+});
 </script>
 </body>
 </html>
@@ -456,7 +441,7 @@ window.addEventListener('beforeunload', () => {{
 
 # Controlla se ci sono nuovi dati
 current_time = time.time()
-if current_time - st.session_state.last_check_time > 5:  # Controlla ogni 5 secondi
+if current_time - st.session_state.last_check_time > 10:  # Controlla ogni 10 secondi
     new_df = get_sheet_data()
     new_hash = get_data_hash(new_df)
     
@@ -465,6 +450,7 @@ if current_time - st.session_state.last_check_time > 5:  # Controlla ogni 5 seco
         st.session_state.spiral_count = len(new_df)
         st.session_state.last_data_hash = new_hash
         st.session_state.current_spirals = generate_spirals(new_df)
+        st.session_state.last_update_time = datetime.now().isoformat()
         st.rerun()
     
     st.session_state.last_check_time = current_time
@@ -482,27 +468,42 @@ with col1:
     st.metric("Spirali Totali", st.session_state.spiral_count, delta=None)
     st.info("""
     **✨ Auto-aggiornamento ATTIVO**
-    - Check ogni 3 secondi
-    - Nessun refresh pagina
+    - Check ogni 5 secondi
+    - Ricarica automatica quando trova nuovi dati
     - Contatore in tempo reale
-    - Effetti visivi automatici
+    - Funziona anche a schermo intero
     """)
 
 with col2:
-    st.metric("Stato Sistema", "🟢 ATTIVO")
+    status = "🟢 ATTIVO" if st.session_state.spiral_count > 0 else "🟡 IN ATTESA"
+    st.metric("Stato Sistema", status)
     st.info("""
     **🔧 Tecnologia:**
-    - JavaScript polling
-    - Aggiornamento dinamico
+    - JavaScript polling ogni 5 secondi
     - Collegamento diretto al Google Sheet
-    - WebSocket ready
+    - Ricarica automatica della pagina
+    - Supporto schermo intero
     """)
 
 st.markdown("---")
-st.success("""
-**✅ Sistema attivo!** Le spirali si aggiorneranno automaticamente ogni 3 secondi.
-Nuove aggiunte appariranno con effetti luminosi senza refresh della pagina.
+st.success(f"""
+**✅ Sistema attivo!** Ultimo aggiornamento: {st.session_state.last_update_time.split('.')[0].replace('T', ' ')}
+Le spirali si aggiorneranno automaticamente quando vengono aggiunti nuovi questionari.
 """)
 
+# Aggiungi un pulsante per forzare il controllo manuale
+if st.button("🔍 Controlla manualmente nuovi dati"):
+    new_df = get_sheet_data()
+    new_count = len(new_df)
+    if new_count > st.session_state.spiral_count:
+        st.success(f"Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
+        st.session_state.sheet_data = new_df
+        st.session_state.spiral_count = new_count
+        st.session_state.last_data_hash = get_data_hash(new_df)
+        st.session_state.current_spirals = generate_spirals(new_df)
+        st.session_state.last_update_time = datetime.now().isoformat()
+        st.rerun()
+    else:
+        st.info("Nessun nuovo questionario trovato.")
 
 
