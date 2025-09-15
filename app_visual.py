@@ -36,7 +36,7 @@ st.markdown("""
 
 # Funzione per desaturare i colori
 def fade_color(hex_color, fade_factor):
-    """Desatura un colore in base al fattore di fade (0-1)"""
+    """Desatura un colore in base al fattore de fade (0-1)"""
     try:
         hex_color = hex_color.lstrip('#')
         rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
@@ -67,6 +67,8 @@ if 'auto_check_interval' not in st.session_state:
     st.session_state.auto_check_interval = 15
 if 'force_reload' not in st.session_state:
     st.session_state.force_reload = False
+if 'page_loaded' not in st.session_state:
+    st.session_state.page_loaded = time.time()
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -84,7 +86,7 @@ def get_sheet_data():
         st.error(f"Errore nel recupero dati: {e}")
         return pd.DataFrame()
 
-# Funzione for generare un hash dei dati
+# Funzione per generare un hash dei dati
 def get_data_hash(df):
     return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
 
@@ -164,6 +166,7 @@ if current_time - st.session_state.last_check_time > st.session_state.auto_check
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
+            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
             st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
@@ -179,6 +182,12 @@ if current_time - st.session_state.last_check_time > st.session_state.auto_check
     except Exception as e:
         st.error(f"Errore durante il controllo: {e}")
         st.session_state.last_check_time = current_time
+
+# Auto-refresh ogni 30 secondi per sicurezza
+if time.time() - st.session_state.page_loaded > 30:
+    st.session_state.page_loaded = time.time()
+    st.session_state.last_check_time = time.time()
+    st.rerun()
 
 # Preparazione dati per il frontend
 spirals_data = {
@@ -196,6 +205,7 @@ html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
+<meta http-equiv="refresh" content="30">
 <style>
 body {{
     margin: 0;
@@ -379,7 +389,7 @@ function handleResize() {{
     initCanvas();
 }}
 
-// Aggiorna il contatore de tempo
+// Aggiorna il contatore di tempo
 function updateStatus() {{
     const now = Date.now() / 1000;
     const timeLeft = Math.max(0, nextCheckTime - now);
@@ -446,6 +456,11 @@ document.addEventListener('fullscreenchange', handleResize);
 // Doppio click per fullscreen
 canvas.addEventListener('dblclick', toggleFullscreen);
 
+// Auto-refresh ogni 30 secondi
+setTimeout(() => {{
+    window.location.reload();
+}}, 30000);
+
 // Esponi le variabili per aggiornamenti
 window.updateTrigger = {st.session_state.update_trigger};
 window.currentSpiralCount = {st.session_state.spiral_count};
@@ -473,6 +488,7 @@ with col1:
     **✨ Sistema ATTIVO**
     - Controllo ogni {st.session_state.auto_check_interval}s
     - Ultimo aggiornamento: {st.session_state.last_update_time}
+    - Auto-refresh ogni 30s
     - Sfondo nero garantito
     """)
 
@@ -482,7 +498,7 @@ with col2:
     st.info("""
     **🔧 Tecnologia:**
     - Controllo automatico ogni 15s
-    - Refresh automatico quando nuovi dati
+    - Auto-refresh ogni 30s
     - Canvas 2D nativo
     - Schermo intero funzionante
     """)
@@ -524,11 +540,11 @@ st.success("""
 - **Doppio click** sulla visualizzazione per schermo intero
 - **Click sul pulsante ⛶** per schermo intero
 - **ESC** per uscire dallo schermo intero
-- Il sistema controlla automaticamente ogni 15 secondi
-- I nuovi dati appariranno automaticamente dopo il refresh
+- Il sistema si aggiorna automaticamente ogni 30 secondi
+- I nuovi dati appariranno automaticamente
 """)
 
-# JavaScript per forzare l'aggiornamento se necessario
+# JavaScript per forzare l'aggiornamento
 st.markdown(f"""
 <script>
 // Forza l'aggiornamento se ci sono nuovi dati
@@ -547,10 +563,4 @@ if (window.forceReload !== {str(st.session_state.force_reload).lower()} ||
 # Reset force_reload dopo l'uso
 if st.session_state.force_reload:
     st.session_state.force_reload = False
-
-# Aggiungi un refresh automatico ogni 30 secondi per sicurezza
-if time.time() - st.session_state.last_check_time > 30:
-    st.session_state.last_check_time = time.time()
-    st.rerun()
-
 
