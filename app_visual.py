@@ -67,8 +67,6 @@ if 'auto_check_interval' not in st.session_state:
     st.session_state.auto_check_interval = 15
 if 'force_reload' not in st.session_state:
     st.session_state.force_reload = False
-if 'page_loaded' not in st.session_state:
-    st.session_state.page_loaded = time.time()
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -157,7 +155,7 @@ st.session_state.current_spirals = spirali
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# Controllo automatico dei nuovi dati - PRIMA del rendering HTML
+# Controllo automatico dei nuovi dati
 current_time = time.time()
 if current_time - st.session_state.last_check_time > st.session_state.auto_check_interval:
     try:
@@ -194,7 +192,7 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con visualizzazione originale
+# 📊 HTML + JS con visualizzazione originale e sfondo nero
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -205,7 +203,7 @@ body {{
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background: #000000;
+    background: #000000 !important;
     font-family: Arial, sans-serif;
 }}
 #graph-container {{
@@ -214,11 +212,19 @@ body {{
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: #000000;
+    background: #000000 !important;
 }}
 #graph {{
     width: 100%;
     height: 100%;
+    background: #000000 !important;
+}}
+.js-plotly-plot .plotly {{
+    background: #000000 !important;
+}}
+.js-plotly-plot .plotly .bg {{
+    background: #000000 !important;
+    fill: #000000 !important;
 }}
 #status {{
     position: fixed;
@@ -231,7 +237,6 @@ body {{
     border-radius: 8px;
     font-size: 14px;
     border: 1px solid rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(5px);
 }}
 #logo {{
     position: fixed;
@@ -263,7 +268,6 @@ body {{
     border-radius: 6px;
     cursor: pointer;
     font-size: 16px;
-    backdrop-filter: blur(5px);
 }}
 #fullscreen-btn:hover {{
     background: rgba(255, 255, 255, 0.2);
@@ -294,15 +298,12 @@ let lastUpdateTrigger = {st.session_state.update_trigger};
 let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
 let forceReload = {str(st.session_state.force_reload).lower()};
 let plotlyGraph = null;
-let isInitialized = false;
 
 // Funzione per inizializzare il grafico
 function initializePlot() {{
-    if (isInitialized) return;
-    
     const layout = {{
-        xaxis: {{visible: false, range: [-10, 10]}},
-        yaxis: {{visible: false, range: [-10, 10]}},
+        xaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false}},
+        yaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false}},
         margin: {{t:0, b:0, l:0, r:0}},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)',
@@ -310,23 +311,19 @@ function initializePlot() {{
         showlegend: false
     }};
     
-    Plotly.newPlot('graph', [], layout, {{
+    const config = {{
         displayModeBar: false,
         staticPlot: false,
         responsive: true
-    }}).then(function() {{
-        isInitialized = true;
+    }};
+    
+    Plotly.newPlot('graph', [], layout, config).then(function() {{
         render();
     }});
 }}
 
 // Funzione principale di rendering con effetto originale
 function render() {{
-    if (!isInitialized) {{
-        requestAnimationFrame(render);
-        return;
-    }}
-    
     try {{
         const time = (Date.now() - t0) / 1000;
         const traces = [];
@@ -334,8 +331,8 @@ function render() {{
         currentData.spirali.forEach(spiral => {{
             if (!spiral.x || !spiral.y) return;
             
-            const step = 4; // Linee più distanziate come nell'originale
-            const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * time * 0.3); // Movimento più lento
+            const step = 4;
+            const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * time * 0.3);
             
             for (let j = 1; j < spiral.x.length; j += step) {{
                 if (j >= spiral.x.length || j >= spiral.y.length) continue;
@@ -346,10 +343,9 @@ function render() {{
                 let glowEffect = 0;
                 let glowColor = spiral.color;
                 
-                // Effetto per nuove spirale
                 if (spiral.is_new) {{
                     const pulseTime = (Date.now() - t0) / 1000;
-                    glowEffect = 3 + 2 * Math.sin(pulseTime * 5); // Effetto più lento
+                    glowEffect = 3 + 2 * Math.sin(pulseTime * 5);
                     glowColor = '#ffffff';
                 }}
                 
@@ -360,7 +356,7 @@ function render() {{
                     line: {{
                         color: glowColor,
                         width: 1.5 + spiral.intensity * 3 + glowEffect,
-                        shape: 'spline' // Linee curve come nell'originale
+                        shape: 'spline'
                     }},
                     opacity: Math.max(0.1, Math.min(1, alpha)),
                     hoverinfo: 'skip',
@@ -369,10 +365,13 @@ function render() {{
             }}
         }});
         
-        // Aggiorna il grafico
+        // Aggiorna il grafico mantenendo lo sfondo nero
         Plotly.react('graph', traces, {{
             xaxis: {{range: [-10, 10]}},
             yaxis: {{range: [-10, 10]}}
+        }}, {{
+            displayModeBar: false,
+            staticPlot: false
         }});
         
     }} catch (error) {{
@@ -392,7 +391,7 @@ function toggleFullscreen() {{
     }}
 }}
 
-// Aggiorna il contatore di tempo
+// Aggiorna il contatore
 function updateStatus() {{
     const now = Date.now() / 1000;
     const timeLeft = Math.max(0, nextCheckTime - now);
@@ -410,7 +409,6 @@ function checkForUpdates() {{
         document.getElementById('status').textContent = "🔄 Controllo nuovi dati...";
         document.getElementById('status').classList.add('pulse');
         
-        // Forza il refresh
         setTimeout(() => {{
             window.location.reload();
         }}, 1500);
@@ -423,9 +421,12 @@ function checkForUpdates() {{
 
 // Inizializzazione
 window.addEventListener('load', function() {{
+    // Forza lo sfondo nero
+    document.body.style.backgroundColor = '#000000';
+    document.getElementById('graph-container').style.backgroundColor = '#000000';
+    
     initializePlot();
     
-    // Forza il reload se necessario
     if (forceReload) {{
         document.getElementById('status').textContent = "🔄 Aggiornamento in corso...";
         setTimeout(() => {{
@@ -434,10 +435,7 @@ window.addEventListener('load', function() {{
         return;
     }}
     
-    // Controllo aggiornamenti ogni 5 secondi (non ogni secondo)
     setInterval(checkForUpdates, 5000);
-    
-    // Aggiorna status iniziale
     updateStatus();
 }});
 
@@ -456,15 +454,15 @@ document.addEventListener('fullscreenchange', function() {{
 // Doppio click per fullscreen
 document.getElementById('graph-container').addEventListener('dblclick', toggleFullscreen);
 
-// Esponi le variabili
-window.updateTrigger = {st.session_state.update_trigger};
-window.currentSpiralCount = {st.session_state.spiral_count};
-window.forceReload = {str(st.session_state.force_reload).lower()};
-
 // Auto-refresh ogni 30 secondi
 setTimeout(() => {{
     window.location.reload();
 }}, 30000);
+
+// Esponi le variabili
+window.updateTrigger = {st.session_state.update_trigger};
+window.currentSpiralCount = {st.session_state.spiral_count};
+window.forceReload = {str(st.session_state.force_reload).lower()};
 </script>
 </body>
 </html>
@@ -475,7 +473,7 @@ st.components.v1.html(html_code, height=800, scrolling=False)
 
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA AUTO-AGGIORNAMENTO")
+st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE")
 
 col1, col2 = st.columns(2)
 
@@ -485,21 +483,21 @@ with col1:
     time_left = max(0, next_check - time.time())
     st.metric("Prossimo controllo", f"{int(time_left)}s")
     st.info(f"""
-    **✨ Sistema ATTIVO**
-    - Spirali visualizzate: {st.session_state.spiral_count}
+    **✨ Visualizzazione ATTIVA**
+    - Spirali: {st.session_state.spiral_count}
     - Ultimo aggiornamento: {st.session_state.last_update_time}
-    - Auto-refresh ogni 30s
+    - Sfondo nero garantito
     """)
 
 with col2:
     status = "🟢 ATTIVO" if st.session_state.spiral_count > 0 else "🟡 IN ATTESA"
-    st.metric("Stato", status)
+    st.metric("Stato Sistema", status)
     st.info("""
-    **🔧 Tecnologia:**
-    - Visualizzazione Plotly originale
-    - Movimento più lento e fluido
-    - Linee tratteggiate e effetto glow
-    - Schermo intero funzionante
+    **🔧 Caratteristiche:**
+    - Grafica originale Plotly
+    - Sfondo nero permanente
+    - Movimento fluido e lento
+    - Auto-refresh ogni 30s
     """)
 
 # Pulsante di aggiornamento manuale
@@ -533,15 +531,16 @@ if new_interval != st.session_state.auto_check_interval:
 # Istruzioni
 st.markdown("---")
 st.success("""
-**✅ Istruzioni:**
+**✅ Sistema pronto:**
 - **Doppio click** per schermo intero
-- **Click su ⛶** per schermo intero
-- **ESC** per uscire
-- Auto-refresh ogni 30 secondi
-- Grafica originale con linee tratteggiate
+- **Click su ⛶** per schermo intero  
+- **ESC** per uscire dallo schermo intero
+- **Sfondo nero** permanente garantito
+- **Auto-aggiornamento** ogni 30 secondi
 """)
 
 # Reset force_reload
 if st.session_state.force_reload:
     st.session_state.force_reload = False
+
 
