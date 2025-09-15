@@ -192,7 +192,7 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con visualizzazione originale e sfondo nero
+# 📊 HTML + JS con effetto originale delle linee tratteggiate che si offuscano
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -203,7 +203,7 @@ body {{
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background: #000000 !important;
+    background: #000000;
     font-family: Arial, sans-serif;
 }}
 #graph-container {{
@@ -212,19 +212,18 @@ body {{
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: #000000 !important;
+    background: #000000;
 }}
 #graph {{
     width: 100%;
     height: 100%;
-    background: #000000 !important;
+    background: #000000;
 }}
-.js-plotly-plot .plotly {{
+.js-plotly-plot .plotly, 
+.js-plotly-plot .plotly .bg,
+.js-plotly-plot .plotly .gridlayer,
+.js-plotly-plot .plotly .main-svg {{
     background: #000000 !important;
-}}
-.js-plotly-plot .plotly .bg {{
-    background: #000000 !important;
-    fill: #000000 !important;
 }}
 #status {{
     position: fixed;
@@ -302,8 +301,8 @@ let plotlyGraph = null;
 // Funzione per inizializzare il grafico
 function initializePlot() {{
     const layout = {{
-        xaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false}},
-        yaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false}},
+        xaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false, showticklabels: false}},
+        yaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false, showticklabels: false}},
         margin: {{t:0, b:0, l:0, r:0}},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)',
@@ -331,21 +330,23 @@ function render() {{
         currentData.spirali.forEach(spiral => {{
             if (!spiral.x || !spiral.y) return;
             
-            const step = 4;
-            const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * time * 0.3);
+            const step = 4; // Linee più distanziate per effetto tratteggiato
+            const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * spiral.freq * time * 0.5); // Movimento più lento
             
             for (let j = 1; j < spiral.x.length; j += step) {{
                 if (j >= spiral.x.length || j >= spiral.y.length) continue;
                 
                 const segmentProgress = j / spiral.x.length;
-                const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
+                // Effetto di offuscamento progressivo: le linee più lontane sono più trasparenti
+                const alpha = (0.3 + 0.6 * (1 - segmentProgress)) * flicker;
                 
                 let glowEffect = 0;
                 let glowColor = spiral.color;
                 
+                // Effetto per nuove spirale
                 if (spiral.is_new) {{
                     const pulseTime = (Date.now() - t0) / 1000;
-                    glowEffect = 3 + 2 * Math.sin(pulseTime * 5);
+                    glowEffect = 2 + 1.5 * Math.sin(pulseTime * 6);
                     glowColor = '#ffffff';
                 }}
                 
@@ -355,10 +356,11 @@ function render() {{
                     mode: 'lines',
                     line: {{
                         color: glowColor,
-                        width: 1.5 + spiral.intensity * 3 + glowEffect,
-                        shape: 'spline'
+                        width: 1.2 + spiral.intensity * 2.5 + glowEffect,
+                        shape: 'spline',
+                        dash: j % 8 === 0 ? 'dot' : 'solid' // Effetto tratteggiato alternato
                     }},
-                    opacity: Math.max(0.1, Math.min(1, alpha)),
+                    opacity: Math.max(0.05, Math.min(0.9, alpha)), // Opacità variabile
                     hoverinfo: 'skip',
                     showlegend: false
                 }});
@@ -473,7 +475,7 @@ st.components.v1.html(html_code, height=800, scrolling=False)
 
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE")
+st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE ORIGINALE")
 
 col1, col2 = st.columns(2)
 
@@ -483,10 +485,11 @@ with col1:
     time_left = max(0, next_check - time.time())
     st.metric("Prossimo controllo", f"{int(time_left)}s")
     st.info(f"""
-    **✨ Visualizzazione ATTIVA**
+    **✨ Effetto Originale**
     - Spirali: {st.session_state.spiral_count}
-    - Ultimo aggiornamento: {st.session_state.last_update_time}
-    - Sfondo nero garantito
+    - Linee tratteggiate e offuscate
+    - Movimento lento e fluido
+    - Sfondo nero intenso
     """)
 
 with col2:
@@ -494,10 +497,10 @@ with col2:
     st.metric("Stato Sistema", status)
     st.info("""
     **🔧 Caratteristiche:**
-    - Grafica originale Plotly
-    - Sfondo nero permanente
-    - Movimento fluido e lento
-    - Auto-refresh ogni 30s
+    - Effetto offuscamento progressivo
+    - Linee tratteggiate alternate
+    - Opacità variabile
+    - Animazione fluida
     """)
 
 # Pulsante di aggiornamento manuale
@@ -531,17 +534,18 @@ if new_interval != st.session_state.auto_check_interval:
 # Istruzioni
 st.markdown("---")
 st.success("""
-**✅ Sistema pronto:**
-- **Doppio click** per schermo intero
-- **Click su ⛶** per schermo intero  
-- **ESC** per uscire dallo schermo intero
-- **Sfondo nero** permanente garantito
+**✅ Effetto Originale Attivo:**
+- **Linee tratteggiate** con effetto di offuscamento
+- **Opacità progressiva** (più trasparente verso l'esterno)
+- **Movimento lento** e fluido
+- **Sfondo nero** intenso
 - **Auto-aggiornamento** ogni 30 secondi
 """)
 
 # Reset force_reload
 if st.session_state.force_reload:
     st.session_state.force_reload = False
+
 
 
 
