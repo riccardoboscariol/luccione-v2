@@ -84,7 +84,7 @@ def get_sheet_data():
         st.error(f"Errore nel recupero dati: {e}")
         return pd.DataFrame()
 
-# Funzione per generare un hash dei dati
+# Funzione for generare un hash dei dati
 def get_data_hash(df):
     return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
 
@@ -379,7 +379,7 @@ function handleResize() {{
     initCanvas();
 }}
 
-// Aggiorna il contatore di tempo
+// Aggiorna il contatore de tempo
 function updateStatus() {{
     const now = Date.now() / 1000;
     const timeLeft = Math.max(0, nextCheckTime - now);
@@ -547,5 +547,10 @@ if (window.forceReload !== {str(st.session_state.force_reload).lower()} ||
 # Reset force_reload dopo l'uso
 if st.session_state.force_reload:
     st.session_state.force_reload = False
+
+# Aggiungi un refresh automatico ogni 30 secondi per sicurezza
+if time.time() - st.session_state.last_check_time > 30:
+    st.session_state.last_check_time = time.time()
+    st.rerun()
 
 
