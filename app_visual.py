@@ -183,12 +183,6 @@ if current_time - st.session_state.last_check_time > st.session_state.auto_check
         st.error(f"Errore durante il controllo: {e}")
         st.session_state.last_check_time = current_time
 
-# Auto-refresh ogni 30 secondi per sicurezza
-if time.time() - st.session_state.page_loaded > 30:
-    st.session_state.page_loaded = time.time()
-    st.session_state.last_check_time = time.time()
-    st.rerun()
-
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
@@ -200,12 +194,12 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con Canvas 2D personalizzato
+# 📊 HTML + JS con visualizzazione originale
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
-<meta http-equiv="refresh" content="30">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
 body {{
     margin: 0;
@@ -214,7 +208,7 @@ body {{
     background: #000000;
     font-family: Arial, sans-serif;
 }}
-#container {{
+#graph-container {{
     position: fixed;
     top: 0;
     left: 0;
@@ -222,10 +216,7 @@ body {{
     height: 100vh;
     background: #000000;
 }}
-#canvas {{
-    position: absolute;
-    top: 0;
-    left: 0;
+#graph {{
     width: 100%;
     height: 100%;
 }}
@@ -288,105 +279,117 @@ body {{
 </style>
 </head>
 <body>
-<div id="container">
-    <canvas id="canvas"></canvas>
-    <div id="status">Spirali: {st.session_state.spiral_count} | Auto-aggiornamento: ATTIVO</div>
+<div id="graph-container">
+    <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
+    <div id="graph"></div>
 </div>
 
 <script>
-// Dati iniziali
 let currentData = {initial_data_json};
-let spirals = currentData.spirali || [];
+let t0 = Date.now();
 let currentSpiralCount = {st.session_state.spiral_count};
 let lastUpdateTrigger = {st.session_state.update_trigger};
 let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
 let forceReload = {str(st.session_state.force_reload).lower()};
+let plotlyGraph = null;
+let isInitialized = false;
 
-// Elementi DOM
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const statusElement = document.getElementById('status');
-
-// Variabili di rendering
-let t0 = Date.now();
-let animationId = null;
-
-// Inizializzazione canvas
-function initCanvas() {{
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+// Funzione per inizializzare il grafico
+function initializePlot() {{
+    if (isInitialized) return;
+    
+    const layout = {{
+        xaxis: {{visible: false, range: [-10, 10]}},
+        yaxis: {{visible: false, range: [-10, 10]}},
+        margin: {{t:0, b:0, l:0, r:0}},
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        autosize: true,
+        showlegend: false
+    }};
+    
+    Plotly.newPlot('graph', [], layout, {{
+        displayModeBar: false,
+        staticPlot: false,
+        responsive: true
+    }}).then(function() {{
+        isInitialized = true;
+        render();
+    }});
 }}
 
-// Funzione di rendering
+// Funzione principale di rendering con effetto originale
 function render() {{
-    const currentTime = Date.now();
-    const elapsedTime = (currentTime - t0) / 1000;
+    if (!isInitialized) {{
+        requestAnimationFrame(render);
+        return;
+    }}
     
-    // Sfondo nero
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    const scale = Math.min(canvas.width, canvas.height) / 20;
-    
-    // Renderizza spirali
-    spirals.forEach(spiral => {{
-        if (!spiral.x || !spiral.y) return;
+    try {{
+        const time = (Date.now() - t0) / 1000;
+        const traces = [];
         
-        const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * elapsedTime);
-        const baseAlpha = spiral.intensity * 0.8;
-        
-        ctx.beginPath();
-        
-        for (let i = 0; i < spiral.x.length; i += 2) {{
-            if (i >= spiral.x.length || i >= spiral.y.length) continue;
+        currentData.spirali.forEach(spiral => {{
+            if (!spiral.x || !spiral.y) return;
             
-            const x = centerX + spiral.x[i] * scale;
-            const y = centerY + spiral.y[i] * scale;
+            const step = 4; // Linee più distanziate come nell'originale
+            const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * time * 0.3); // Movimento più lento
             
-            if (i === 0) {{
-                ctx.moveTo(x, y);
-            }} else {{
-                ctx.lineTo(x, y);
+            for (let j = 1; j < spiral.x.length; j += step) {{
+                if (j >= spiral.x.length || j >= spiral.y.length) continue;
+                
+                const segmentProgress = j / spiral.x.length;
+                const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
+                
+                let glowEffect = 0;
+                let glowColor = spiral.color;
+                
+                // Effetto per nuove spirale
+                if (spiral.is_new) {{
+                    const pulseTime = (Date.now() - t0) / 1000;
+                    glowEffect = 3 + 2 * Math.sin(pulseTime * 5); // Effetto più lento
+                    glowColor = '#ffffff';
+                }}
+                
+                traces.push({{
+                    x: [spiral.x[j-1], spiral.x[j]],
+                    y: [spiral.y[j-1], spiral.y[j]],
+                    mode: 'lines',
+                    line: {{
+                        color: glowColor,
+                        width: 1.5 + spiral.intensity * 3 + glowEffect,
+                        shape: 'spline' // Linee curve come nell'originale
+                    }},
+                    opacity: Math.max(0.1, Math.min(1, alpha)),
+                    hoverinfo: 'skip',
+                    showlegend: false
+                }});
             }}
-        }}
+        }});
         
-        let lineWidth = 1 + spiral.intensity * 3;
-        let glowColor = spiral.color;
+        // Aggiorna il grafico
+        Plotly.react('graph', traces, {{
+            xaxis: {{range: [-10, 10]}},
+            yaxis: {{range: [-10, 10]}}
+        }});
         
-        if (spiral.is_new) {{
-            const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 8);
-            lineWidth *= (1 + pulse);
-            glowColor = 'rgb(255, 255, 255)';
-        }}
-        
-        ctx.strokeStyle = glowColor;
-        ctx.lineWidth = lineWidth;
-        ctx.globalAlpha = baseAlpha * flicker;
-        ctx.stroke();
-    }});
+    }} catch (error) {{
+        console.log('Render error:', error);
+    }}
     
-    ctx.globalAlpha = 1;
-    animationId = requestAnimationFrame(render);
+    requestAnimationFrame(render);
 }}
 
 // Schermo intero
 function toggleFullscreen() {{
+    const container = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        document.documentElement.requestFullscreen();
+        container.requestFullscreen();
     }} else {{
         document.exitFullscreen();
     }}
-}}
-
-// Gestione resize
-function handleResize() {{
-    initCanvas();
 }}
 
 // Aggiorna il contatore di tempo
@@ -396,7 +399,7 @@ function updateStatus() {{
     const minutes = Math.floor(timeLeft / 60);
     const seconds = Math.floor(timeLeft % 60);
     
-    statusElement.textContent = `Spirali: ${{currentSpiralCount}} | Prossimo controllo: ${{minutes}}m ${{seconds}}s`;
+    document.getElementById('status').textContent = `Spirali: ${{currentSpiralCount}} | Prossimo controllo: ${{minutes}}m ${{seconds}}s`;
 }}
 
 // Controlla aggiornamenti
@@ -404,15 +407,14 @@ function checkForUpdates() {{
     const now = Date.now() / 1000;
     
     if (now >= nextCheckTime) {{
-        statusElement.textContent = "🔄 Controllo nuovi dati...";
-        statusElement.classList.add('pulse');
+        document.getElementById('status').textContent = "🔄 Controllo nuovi dati...";
+        document.getElementById('status').classList.add('pulse');
         
-        // Forza il refresh per controllare nuovi dati
+        // Forza il refresh
         setTimeout(() => {{
             window.location.reload();
-        }}, 1000);
+        }}, 1500);
         
-        // Resetta il timer
         nextCheckTime = now + {st.session_state.auto_check_interval};
     }}
     
@@ -421,50 +423,48 @@ function checkForUpdates() {{
 
 // Inizializzazione
 window.addEventListener('load', function() {{
-    initCanvas();
-    render();
+    initializePlot();
     
     // Forza il reload se necessario
     if (forceReload) {{
-        statusElement.textContent = "🔄 Aggiornamento in corso...";
+        document.getElementById('status').textContent = "🔄 Aggiornamento in corso...";
         setTimeout(() => {{
             window.location.reload();
         }}, 1000);
         return;
     }}
     
-    // Controllo aggiornamenti ogni secondo
-    setInterval(checkForUpdates, 1000);
+    // Controllo aggiornamenti ogni 5 secondi (non ogni secondo)
+    setInterval(checkForUpdates, 5000);
     
     // Aggiorna status iniziale
     updateStatus();
-    
-    // Verifica se ci sono aggiornamenti pendenti
-    if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
-        statusElement.textContent = "🔄 Aggiornamento dati...";
-        setTimeout(() => {{
-            window.location.reload();
-        }}, 1000);
+}});
+
+// Eventi fullscreen
+document.addEventListener('fullscreenchange', function() {{
+    const logo = document.getElementById('logo');
+    if (document.fullscreenElement) {{
+        logo.style.width = '80px';
+        logo.style.height = '80px';
+    }} else {{
+        logo.style.width = '60px';
+        logo.style.height = '60px';
     }}
 }});
 
-window.addEventListener('resize', handleResize);
-
-// Eventi fullscreen
-document.addEventListener('fullscreenchange', handleResize);
-
 // Doppio click per fullscreen
-canvas.addEventListener('dblclick', toggleFullscreen);
+document.getElementById('graph-container').addEventListener('dblclick', toggleFullscreen);
+
+// Esponi le variabili
+window.updateTrigger = {st.session_state.update_trigger};
+window.currentSpiralCount = {st.session_state.spiral_count};
+window.forceReload = {str(st.session_state.force_reload).lower()};
 
 // Auto-refresh ogni 30 secondi
 setTimeout(() => {{
     window.location.reload();
 }}, 30000);
-
-// Esponi le variabili per aggiornamenti
-window.updateTrigger = {st.session_state.update_trigger};
-window.currentSpiralCount = {st.session_state.spiral_count};
-window.forceReload = {str(st.session_state.force_reload).lower()};
 </script>
 </body>
 </html>
@@ -486,10 +486,9 @@ with col1:
     st.metric("Prossimo controllo", f"{int(time_left)}s")
     st.info(f"""
     **✨ Sistema ATTIVO**
-    - Controllo ogni {st.session_state.auto_check_interval}s
+    - Spirali visualizzate: {st.session_state.spiral_count}
     - Ultimo aggiornamento: {st.session_state.last_update_time}
     - Auto-refresh ogni 30s
-    - Sfondo nero garantito
     """)
 
 with col2:
@@ -497,9 +496,9 @@ with col2:
     st.metric("Stato", status)
     st.info("""
     **🔧 Tecnologia:**
-    - Controllo automatico ogni 15s
-    - Auto-refresh ogni 30s
-    - Canvas 2D nativo
+    - Visualizzazione Plotly originale
+    - Movimento più lento e fluido
+    - Linee tratteggiate e effetto glow
     - Schermo intero funzionante
     """)
 
@@ -524,10 +523,8 @@ if st.button("🔄 Controlla nuovi dati ora", type="primary"):
         st.info("📭 Nessun nuovo questionario trovato.")
         st.session_state.last_check_time = time.time()
 
-# Configurazione intervallo di controllo
-new_interval = st.slider("Intervallo di controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5, 
-          help="Imposta ogni quanti secondi controllare nuovi dati")
-
+# Configurazione
+new_interval = st.slider("Intervallo controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5)
 if new_interval != st.session_state.auto_check_interval:
     st.session_state.auto_check_interval = new_interval
     st.session_state.last_check_time = time.time()
@@ -537,30 +534,14 @@ if new_interval != st.session_state.auto_check_interval:
 st.markdown("---")
 st.success("""
 **✅ Istruzioni:**
-- **Doppio click** sulla visualizzazione per schermo intero
-- **Click sul pulsante ⛶** per schermo intero
-- **ESC** per uscire dallo schermo intero
-- Il sistema si aggiorna automaticamente ogni 30 secondi
-- I nuovi dati appariranno automaticamente
+- **Doppio click** per schermo intero
+- **Click su ⛶** per schermo intero
+- **ESC** per uscire
+- Auto-refresh ogni 30 secondi
+- Grafica originale con linee tratteggiate
 """)
 
-# JavaScript per forzare l'aggiornamento
-st.markdown(f"""
-<script>
-// Forza l'aggiornamento se ci sono nuovi dati
-if (window.forceReload !== {str(st.session_state.force_reload).lower()} || 
-    window.updateTrigger !== {st.session_state.update_trigger} || 
-    window.currentSpiralCount !== {st.session_state.spiral_count}) {{
-    
-    console.log("Forzando aggiornamento...");
-    setTimeout(() => {{
-        window.location.reload();
-    }}, 500);
-}}
-</script>
-""", unsafe_allow_html=True)
-
-# Reset force_reload dopo l'uso
+# Reset force_reload
 if st.session_state.force_reload:
     st.session_state.force_reload = False
 
