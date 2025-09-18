@@ -9,6 +9,14 @@ import colorsys
 import hashlib
 from datetime import datetime
 
+# 🔄 Auto-refresh ogni 10 secondi
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if time.time() - st.session_state.last_refresh > 10:
+    st.session_state.last_refresh = time.time()
+    st.rerun()
+
 # 🖥 Configurazione Streamlit
 st.set_page_config(page_title="Specchio Empatico - Opera", layout="wide")
 st.markdown("""
@@ -19,9 +27,10 @@ st.markdown("""
         height: 100%;
         width: 100%;
         background-color: black;
+        overflow: hidden;
     }
     .block-container {
-        padding: 2rem !important;
+        padding: 0 !important;
         max-width: 100% !important;
     }
     .stApp {
@@ -61,12 +70,6 @@ if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = time.time()
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-if 'update_trigger' not in st.session_state:
-    st.session_state.update_trigger = 0
-if 'auto_check_interval' not in st.session_state:
-    st.session_state.auto_check_interval = 15
-if 'force_reload' not in st.session_state:
-    st.session_state.force_reload = False
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -128,7 +131,7 @@ def generate_spirals(df):
         spirali.append({
             "x": x.tolist(), "y": y_proj.tolist(), "color": color,
             "intensity": float(intensity), "freq": float(freq), "id": idx,
-            "base_color": base_color, "is_new": False
+            "base_color": base_color
         })
 
     if spirali:
@@ -152,59 +155,47 @@ st.session_state.last_data_hash = get_data_hash(df)
 spirali = generate_spirals(df)
 st.session_state.current_spirals = spirali
 
-# URL corretto per l'immagine
-FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
-
 # Controllo automatico dei nuovi dati
 current_time = time.time()
-if current_time - st.session_state.last_check_time > st.session_state.auto_check_interval:
+if current_time - st.session_state.last_check_time > 10:
     try:
         new_df = get_sheet_data()
-        new_count = len(new_df)
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
-            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
-            st.session_state.spiral_count = new_count
+            st.session_state.spiral_count = len(new_df)
             st.session_state.last_data_hash = new_hash
             st.session_state.current_spirals = generate_spirals(new_df)
             st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state.update_trigger += 1
-            st.session_state.force_reload = True
             st.session_state.last_check_time = current_time
             st.rerun()
         else:
             st.session_state.last_check_time = current_time
             
     except Exception as e:
-        st.error(f"Errore durante il controllo: {e}")
         st.session_state.last_check_time = current_time
 
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
-    "count": st.session_state.spiral_count,
-    "last_update": st.session_state.last_update_time,
-    "update_trigger": st.session_state.update_trigger,
-    "next_check": st.session_state.last_check_time + st.session_state.auto_check_interval,
-    "force_reload": st.session_state.force_reload
+    "count": st.session_state.spiral_count
 }
-initial_data_json = json.dumps(spirals_data)
+data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con effetto originale delle linee tratteggiate che si offuscano
+# 📊 HTML + JS con effetto sfarfallio migliorato
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-body {{
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
+body {{ 
+    margin: 0; 
+    padding: 0; 
     background: #000000;
-    font-family: Arial, sans-serif;
+    overflow: hidden;
+    font-family: 'Arial', sans-serif;
 }}
 #graph-container {{
     position: fixed;
@@ -214,257 +205,152 @@ body {{
     height: 100vh;
     background: #000000;
 }}
-#graph {{
+#graph {{ 
     width: 100%;
     height: 100%;
-    background: #000000;
-}}
-.js-plotly-plot .plotly, 
-.js-plotly-plot .plotly .bg,
-.js-plotly-plot .plotly .gridlayer,
-.js-plotly-plot .plotly .main-svg {{
-    background: #000000 !important;
-}}
-#status {{
-    position: fixed;
-    top: 15px;
-    left: 15px;
-    z-index: 1000;
-    background: rgba(0, 0, 0, 0.8);
-    color: #ffffff;
-    padding: 10px 15px;
-    border-radius: 8px;
-    font-size: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}}
-#logo {{
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 1000;
-    width: 60px;
-    height: 60px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
-    opacity: 0.9;
-    object-fit: cover;
-    transition: all 0.3s ease;
-}}
-#logo:hover {{
-    transform: scale(1.1);
-    opacity: 1;
 }}
 #fullscreen-btn {{
-    position: fixed;
+    position: absolute;
     top: 15px;
     right: 15px;
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.1);
+    z-index: 10000;
+    background: rgba(255, 255, 255, 0.15);
     color: white;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    padding: 8px 12px;
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    padding: 10px 14px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 20px;
+    backdrop-filter: blur(5px);
+    transition: all 0.3s ease;
 }}
 #fullscreen-btn:hover {{
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
 }}
-.pulse {{
-    animation: pulse 2s infinite;
+#info-panel {{
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    z-index: 10000;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(5px);
+    font-size: 14px;
 }}
-@keyframes pulse {{
-    0% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }}
-    70% {{ box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }}
-    100% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }}
+.glow-text {{
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}}
+:fullscreen {{
+    cursor: none;
+}}
+/* Effetti di luce */
+.light-pulse {{
+    animation: lightPulse 3s ease-in-out infinite;
+}}
+@keyframes lightPulse {{
+    0% {{ opacity: 0.3; }}
+    50% {{ opacity: 0.7; }}
+    100% {{ opacity: 0.3; }}
 }}
 </style>
 </head>
 <body>
 <div id="graph-container">
-    <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
-    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
+    <div id="info-panel" class="light-pulse">
+        <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
+    </div>
+    <button id="fullscreen-btn">⛶</button>
     <div id="graph"></div>
 </div>
 
 <script>
-let currentData = {initial_data_json};
+const DATA = {data_json};
 let t0 = Date.now();
-let currentSpiralCount = {st.session_state.spiral_count};
-let lastUpdateTrigger = {st.session_state.update_trigger};
-let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
-let forceReload = {str(st.session_state.force_reload).lower()};
-let plotlyGraph = null;
 
-// Funzione per inizializzare il grafico
-function initializePlot() {{
+function buildTraces(time){{
+    const traces = [];
+    DATA.spirali.forEach(s => {{
+        const step = 4;
+        // Calcolo opacità variabile in base alla frequenza
+        const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
+        
+        for(let j = 1; j < s.x.length; j += step){{
+            const segmentProgress = j / s.x.length;
+            const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
+            
+            // Effetto glow per le spirali più intense
+            const glow = s.intensity > 0.8 ? 2 : 0;
+            
+            traces.push({{
+                x: s.x.slice(j-1, j+1),
+                y: s.y.slice(j-1, j+1),
+                mode: "lines",
+                line: {{
+                    color: s.color, 
+                    width: 1.8 + s.intensity * 3.5 + glow,
+                    shape: 'spline'
+                }},
+                opacity: Math.max(0.1, Math.min(0.95, alpha)),
+                hoverinfo: "none",
+                showlegend: false,
+                type: "scatter"
+            }});
+        }}
+    }});
+    return traces;
+}}
+
+function render(){{
+    const time = (Date.now() - t0) / 1000;
+    const traces = buildTraces(time);
+    
     const layout = {{
-        xaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false, showticklabels: false}},
-        yaxis: {{visible: false, range: [-10, 10], showgrid: false, zeroline: false, showticklabels: false}},
+        xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
+        yaxis: {{visible: false, autorange: true}},
         margin: {{t:0, b:0, l:0, r:0}},
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: 'rgba(0,0,0,0)',
-        autosize: true,
-        showlegend: false
+        autosize: true
     }};
     
-    const config = {{
+    Plotly.react('graph', traces, layout, {{
         displayModeBar: false,
-        staticPlot: false,
-        responsive: true
-    }};
-    
-    Plotly.newPlot('graph', [], layout, config).then(function() {{
-        render();
+        scrollZoom: false,
+        responsive: true,
+        staticPlot: false
     }});
-}}
-
-// Funzione principale di rendering con effetto originale
-function render() {{
-    try {{
-        const time = (Date.now() - t0) / 1000;
-        const traces = [];
-        
-        currentData.spirali.forEach(spiral => {{
-            if (!spiral.x || !spiral.y) return;
-            
-            const step = 4; // Linee più distanziate per effetto tratteggiato
-            const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * spiral.freq * time * 0.5); // Movimento più lento
-            
-            for (let j = 1; j < spiral.x.length; j += step) {{
-                if (j >= spiral.x.length || j >= spiral.y.length) continue;
-                
-                const segmentProgress = j / spiral.x.length;
-                // Effetto di offuscamento progressivo: le linee più lontane sono più trasparenti
-                const alpha = (0.3 + 0.6 * (1 - segmentProgress)) * flicker;
-                
-                let glowEffect = 0;
-                let glowColor = spiral.color;
-                
-                // Effetto per nuove spirale
-                if (spiral.is_new) {{
-                    const pulseTime = (Date.now() - t0) / 1000;
-                    glowEffect = 2 + 1.5 * Math.sin(pulseTime * 6);
-                    glowColor = '#ffffff';
-                }}
-                
-                traces.push({{
-                    x: [spiral.x[j-1], spiral.x[j]],
-                    y: [spiral.y[j-1], spiral.y[j]],
-                    mode: 'lines',
-                    line: {{
-                        color: glowColor,
-                        width: 1.2 + spiral.intensity * 2.5 + glowEffect,
-                        shape: 'spline',
-                        dash: j % 8 === 0 ? 'dot' : 'solid' // Effetto tratteggiato alternato
-                    }},
-                    opacity: Math.max(0.05, Math.min(0.9, alpha)), // Opacità variabile
-                    hoverinfo: 'skip',
-                    showlegend: false
-                }});
-            }}
-        }});
-        
-        // Aggiorna il grafico mantenendo lo sfondo nero
-        Plotly.react('graph', traces, {{
-            xaxis: {{range: [-10, 10]}},
-            yaxis: {{range: [-10, 10]}}
-        }}, {{
-            displayModeBar: false,
-            staticPlot: false
-        }});
-        
-    }} catch (error) {{
-        console.log('Render error:', error);
-    }}
     
     requestAnimationFrame(render);
 }}
 
-// Schermo intero
-function toggleFullscreen() {{
+// Inizia il rendering
+render();
+
+// Gestione fullscreen
+document.getElementById('fullscreen-btn').addEventListener('click', () => {{
     const container = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        container.requestFullscreen();
+        container.requestFullscreen().catch(err => {{
+            console.log('Error attempting to enable fullscreen:', err);
+        }});
     }} else {{
         document.exitFullscreen();
     }}
-}}
-
-// Aggiorna il contatore
-function updateStatus() {{
-    const now = Date.now() / 1000;
-    const timeLeft = Math.max(0, nextCheckTime - now);
-    const minutes = Math.floor(timeLeft / 60);
-    const seconds = Math.floor(timeLeft % 60);
-    
-    document.getElementById('status').textContent = `Spirali: ${{currentSpiralCount}} | Prossimo controllo: ${{minutes}}m ${{seconds}}s`;
-}}
-
-// Controlla aggiornamenti
-function checkForUpdates() {{
-    const now = Date.now() / 1000;
-    
-    if (now >= nextCheckTime) {{
-        document.getElementById('status').textContent = "🔄 Controllo nuovi dati...";
-        document.getElementById('status').classList.add('pulse');
-        
-        setTimeout(() => {{
-            window.location.reload();
-        }}, 1500);
-        
-        nextCheckTime = now + {st.session_state.auto_check_interval};
-    }}
-    
-    updateStatus();
-}}
-
-// Inizializzazione
-window.addEventListener('load', function() {{
-    // Forza lo sfondo nero
-    document.body.style.backgroundColor = '#000000';
-    document.getElementById('graph-container').style.backgroundColor = '#000000';
-    
-    initializePlot();
-    
-    if (forceReload) {{
-        document.getElementById('status').textContent = "🔄 Aggiornamento in corso...";
-        setTimeout(() => {{
-            window.location.reload();
-        }}, 1000);
-        return;
-    }}
-    
-    setInterval(checkForUpdates, 5000);
-    updateStatus();
 }});
 
-// Eventi fullscreen
-document.addEventListener('fullscreenchange', function() {{
-    const logo = document.getElementById('logo');
-    if (document.fullscreenElement) {{
-        logo.style.width = '80px';
-        logo.style.height = '80px';
-    }} else {{
-        logo.style.width = '60px';
-        logo.style.height = '60px';
-    }}
-}});
+// Aggiorna il contatore ogni 5 secondi
+setInterval(() => {{
+    document.querySelector('.glow-text').textContent = `Spirali: {st.session_state.spiral_count}`;
+}}, 5000);
 
-// Doppio click per fullscreen
-document.getElementById('graph-container').addEventListener('dblclick', toggleFullscreen);
-
-// Auto-refresh ogni 30 secondi
+// Effetto di entrata
 setTimeout(() => {{
-    window.location.reload();
-}}, 30000);
-
-// Esponi le variabili
-window.updateTrigger = {st.session_state.update_trigger};
-window.currentSpiralCount = {st.session_state.spiral_count};
-window.forceReload = {str(st.session_state.force_reload).lower()};
+    document.getElementById('info-panel').style.animation = 'none';
+}}, 3000);
 </script>
 </body>
 </html>
@@ -473,79 +359,31 @@ window.forceReload = {str(st.session_state.force_reload).lower()};
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# LEGENDA
+# ℹ️ Caption + descrizione artistica
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE ORIGINALE")
+st.markdown("""
+<div style='text-align: center; color: white; padding: 2rem;'>
+    <h3 style='color: #e84393; margin-bottom: 1rem;'>🎨 SPECCHIO EMPATICO</h3>
+    <p style='opacity: 0.8; font-style: italic;'>
+        Ogni spirale rappresenta un individuo, pulsante al ritmo della sua empatia.<br>
+        L'inclinazione alternata e lo sfarfallio personalizzato creano un'opera viva e ritmica.
+    </p>
+    <p style='margin-top: 1rem; font-size: 0.9rem; opacity: 0.6;'>
+        ⛶ Premi per il fullscreen totale • 🔄 Auto-aggiornamento ogni 10s
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
-col1, col2 = st.columns(2)
+st.markdown("""
+### 🧭 *Empatia come consapevolezza dell'impatto*
 
-with col1:
-    st.metric("Spirali Totali", st.session_state.spiral_count)
-    next_check = st.session_state.last_check_time + st.session_state.auto_check_interval
-    time_left = max(0, next_check - time.time())
-    st.metric("Prossimo controllo", f"{int(time_left)}s")
-    st.info(f"""
-    **✨ Effetto Originale**
-    - Spirali: {st.session_state.spiral_count}
-    - Linee tratteggiate e offuscate
-    - Movimento lento e fluido
-    - Sfondo nero intenso
-    """)
+> *"L'empatia non è solo sentire l'altro, ma riconoscere il proprio impatto sul mondo e sulla realtà condivisa. È un atto di presenza responsabile."*
 
-with col2:
-    status = "🟢 ATTIVO" if st.session_state.spiral_count > 0 else "🟡 IN ATTESA"
-    st.metric("Stato Sistema", status)
-    st.info("""
-    **🔧 Caratteristiche:**
-    - Effetto offuscamento progressivo
-    - Linee tratteggiate alternate
-    - Opacità variabile
-    - Animazione fluida
-    """)
-
-# Pulsante di aggiornamento manuale
-if st.button("🔄 Controlla nuovi dati ora", type="primary"):
-    new_df = get_sheet_data()
-    new_count = len(new_df)
-    new_hash = get_data_hash(new_df)
-    
-    if new_hash != st.session_state.last_data_hash:
-        st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
-        st.session_state.sheet_data = new_df
-        st.session_state.spiral_count = new_count
-        st.session_state.last_data_hash = new_hash
-        st.session_state.current_spirals = generate_spirals(new_df)
-        st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-        st.session_state.update_trigger += 1
-        st.session_state.force_reload = True
-        st.session_state.last_check_time = time.time()
-        st.rerun()
-    else:
-        st.info("📭 Nessun nuovo questionario trovato.")
-        st.session_state.last_check_time = time.time()
-
-# Configurazione
-new_interval = st.slider("Intervallo controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5)
-if new_interval != st.session_state.auto_check_interval:
-    st.session_state.auto_check_interval = new_interval
-    st.session_state.last_check_time = time.time()
-    st.rerun()
-
-# Istruzioni
-st.markdown("---")
-st.success("""
-**✅ Effetto Originale Attivo:**
-- **Linee tratteggiate** con effetto di offuscamento
-- **Opacità progressiva** (più trasparente verso l'esterno)
-- **Movimento lento** e fluido
-- **Sfondo nero** intenso
-- **Auto-aggiornamento** ogni 30 secondi
+**Interpretazione visiva:**  
+- **Colori vibranti**: Diverse dimensioni dell'empatia  
+- **Sfarfallio ritmico**: Intensità emotiva individuale  
+- **Spirali intrecciate**: Connessioni empatiche tra partecipanti  
+- **Movimento fluido**: Natura dinamica delle relazioni umane
 """)
-
-# Reset force_reload
-if st.session_state.force_reload:
-    st.session_state.force_reload = False
-
-
 
 
