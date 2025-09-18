@@ -91,7 +91,7 @@ def get_sheet_data():
 def get_data_hash(df):
     return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
 
-# Funzione per generare le spirali
+# Funzione per generare le spirali con parametri dinamici
 def generate_spirals(df):
     palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
     theta = np.linspace(0, 12 * np.pi, 1200)
@@ -104,9 +104,14 @@ def generate_spirals(df):
         
         size_factor = media / 5
         intensity = np.clip(size_factor, 0.2, 1.0)
-        freq = 0.5 + (media / 5) * (3.0 - 0.5)
-
+        
+        # Frequenza di pulsazione basata sulla variabilità delle risposte
         std_dev = np.std(scores) if len(scores) > 1 else 0
+        freq = 0.3 + (std_dev / 2) * 0.7  # Più variabilità = pulsazione più veloce
+        
+        # Ampiezza del movimento basata sull'intensità media
+        movement_amplitude = 0.5 + intensity * 1.5
+        
         coherence = 1 - min(std_dev / 2, 1)
         
         dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
@@ -130,8 +135,12 @@ def generate_spirals(df):
 
         spirali.append({
             "x": x.tolist(), "y": y_proj.tolist(), "color": color,
-            "intensity": float(intensity), "freq": float(freq), "id": idx,
-            "base_color": base_color
+            "intensity": float(intensity), 
+            "freq": float(freq),
+            "movement_amp": float(movement_amplitude),
+            "id": idx,
+            "base_color": base_color,
+            "pulse_phase": float(idx * 0.3)  # Fase diversa per ogni spirale
         })
 
     if spirali:
@@ -154,6 +163,9 @@ st.session_state.last_data_hash = get_data_hash(df)
 # Genera le spirali
 spirali = generate_spirals(df)
 st.session_state.current_spirals = spirali
+
+# URL per il frame.png (QR code)
+FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
 # Controllo automatico dei nuovi dati
 current_time = time.time()
@@ -183,7 +195,7 @@ spirals_data = {
 }
 data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con effetto sfarfallio migliorato
+# 📊 HTML + JS con effetto sfarfallio e movimento dinamico
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -241,6 +253,24 @@ body {{
     backdrop-filter: blur(5px);
     font-size: 14px;
 }}
+#qr-code {{
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    z-index: 10000;
+    width: 60px;
+    height: 60px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+    opacity: 0.9;
+    object-fit: cover;
+    transition: all 0.3s ease;
+}}
+#qr-code:hover {{
+    transform: scale(1.1);
+    opacity: 1;
+}}
 .glow-text {{
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }}
@@ -264,6 +294,7 @@ body {{
         <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
     </div>
     <button id="fullscreen-btn">⛶</button>
+    <img id="qr-code" src="{FRAME_IMAGE_URL}" alt="QR Code">
     <div id="graph"></div>
 </div>
 
@@ -275,23 +306,41 @@ function buildTraces(time){{
     const traces = [];
     DATA.spirali.forEach(s => {{
         const step = 4;
-        // Calcolo opacità variabile in base alla frequenza
-        const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
+        
+        // Pulsazione individuale basata sulla frequenza e fase
+        const pulse = 0.7 + 0.3 * Math.sin(2 * Math.PI * s.freq * time + s.pulse_phase);
+        
+        // Movimento dinamico basato sull'ampiezza
+        const movement = s.movement_amp * Math.sin(2 * Math.PI * s.freq * 0.3 * time + s.pulse_phase * 2);
         
         for(let j = 1; j < s.x.length; j += step){{
             const segmentProgress = j / s.x.length;
-            const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
+            const alpha = (0.2 + 0.7 * segmentProgress) * pulse;
             
             // Effetto glow per le spirali più intense
             const glow = s.intensity > 0.8 ? 2 : 0;
             
+            // Applica movimento dinamico alle coordinate
+            const xOffset = movement * Math.cos(segmentProgress * Math.PI * 2);
+            const yOffset = movement * Math.sin(segmentProgress * Math.PI * 2);
+            
+            const xCoords = [
+                s.x[j-1] + xOffset * 0.5,
+                s.x[j] + xOffset
+            ];
+            
+            const yCoords = [
+                s.y[j-1] + yOffset * 0.5,
+                s.y[j] + yOffset
+            ];
+            
             traces.push({{
-                x: s.x.slice(j-1, j+1),
-                y: s.y.slice(j-1, j+1),
+                x: xCoords,
+                y: yCoords,
                 mode: "lines",
                 line: {{
                     color: s.color, 
-                    width: 1.8 + s.intensity * 3.5 + glow,
+                    width: 1.8 + s.intensity * 3.5 * pulse + glow,
                     shape: 'spline'
                 }},
                 opacity: Math.max(0.1, Math.min(0.95, alpha)),
@@ -351,6 +400,16 @@ setInterval(() => {{
 setTimeout(() => {{
     document.getElementById('info-panel').style.animation = 'none';
 }}, 3000);
+
+// Nascondi QR code in fullscreen
+document.addEventListener('fullscreenchange', function() {{
+    const qrCode = document.getElementById('qr-code');
+    if (document.fullscreenElement) {{
+        qrCode.style.opacity = '0.3';
+    }} else {{
+        qrCode.style.opacity = '0.9';
+    }}
+}});
 </script>
 </body>
 </html>
@@ -366,7 +425,7 @@ st.markdown("""
     <h3 style='color: #e84393; margin-bottom: 1rem;'>🎨 SPECCHIO EMPATICO</h3>
     <p style='opacity: 0.8; font-style: italic;'>
         Ogni spirale rappresenta un individuo, pulsante al ritmo della sua empatia.<br>
-        L'inclinazione alternata e lo sfarfallio personalizzato creano un'opera viva e ritmica.
+        Movimento dinamico e pulsazioni variabili creano un'opera viva e ritmica.
     </p>
     <p style='margin-top: 1rem; font-size: 0.9rem; opacity: 0.6;'>
         ⛶ Premi per il fullscreen totale • 🔄 Auto-aggiornamento ogni 10s
@@ -380,10 +439,10 @@ st.markdown("""
 > *"L'empatia non è solo sentire l'altro, ma riconoscere il proprio impatto sul mondo e sulla realtà condivisa. È un atto di presenza responsabile."*
 
 **Interpretazione visiva:**  
+- **Pulsazioni ritmiche**: Frequenza basata sulla variabilità emotiva  
+- **Movimento dinamico**: Ampiezza basata sull'intensità empatica  
 - **Colori vibranti**: Diverse dimensioni dell'empatia  
-- **Sfarfallio ritmico**: Intensità emotiva individuale  
 - **Spirali intrecciate**: Connessioni empatiche tra partecipanti  
-- **Movimento fluido**: Natura dinamica delle relazioni umane
+- **QR code**: Accesso alla partecipazione dell'opera
 """)
-
 
