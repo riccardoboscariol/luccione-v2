@@ -64,6 +64,8 @@ if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
 if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
+if 'force_reload' not in st.session_state:
+    st.session_state.force_reload = False
 
 # Funzione per ottenere i dati dal Google Sheet
 def get_sheet_data():
@@ -78,11 +80,13 @@ def get_sheet_data():
         records = sheet.get_all_records()
         
         # Debug: mostra i primi record
-        st.sidebar.write("Ultimi dati ricevuti:", records[:2] if records else "Nessun dato")
+        if records:
+            st.sidebar.write(f"📊 Righe trovate: {len(records)}")
+            st.sidebar.write(f"📝 Ultima riga: {records[-1]}")
         
         return pd.DataFrame(records)
     except Exception as e:
-        st.error(f"Errore nel recupero dati: {e}")
+        st.sidebar.error(f"❌ Errore nel recupero dati: {e}")
         return pd.DataFrame()
 
 # Funzione per generare un hash dei dati
@@ -106,10 +110,6 @@ def generate_spirals(df):
             row.get("Empathic Concern", 3), 
             row.get("Personal Distress", 3)
         ]
-        
-        # Debug: mostra i punteggi
-        if idx == 0:
-            st.sidebar.write(f"Prima riga punteggi: {scores}")
         
         media = np.mean(scores)
         size_factor = media / 5
@@ -169,50 +169,52 @@ def generate_spirals(df):
     return spirali
 
 # Carica i dati iniziali
-df = get_sheet_data()
-initial_count = len(df)
-st.session_state.spiral_count = initial_count
-st.session_state.sheet_data = df
-st.session_state.last_data_hash = get_data_hash(df)
-
-# Genera le spirali
-spirali = generate_spirals(df)
-st.session_state.current_spirals = spirali
+if st.session_state.sheet_data.empty:
+    df = get_sheet_data()
+    st.session_state.sheet_data = df
+    st.session_state.spiral_count = len(df)
+    st.session_state.last_data_hash = get_data_hash(df)
+    st.session_state.current_spirals = generate_spirals(df)
 
 # URL per il frame.png (QR code)
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# Controllo automatico dei nuovi dati
+# Controllo automatico dei nuovi dati ogni 15 secondi
 current_time = time.time()
 if current_time - st.session_state.last_check_time > 15:
     try:
         new_df = get_sheet_data()
+        new_count = len(new_df)
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
+            st.sidebar.success(f"🎉 Nuovi dati! Da {st.session_state.spiral_count} a {new_count} spirali")
             st.session_state.sheet_data = new_df
-            st.session_state.spiral_count = len(new_df)
+            st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
             st.session_state.current_spirals = generate_spirals(new_df)
             st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
             st.session_state.update_trigger += 1
+            st.session_state.force_reload = True
             st.session_state.last_check_time = current_time
             st.rerun()
         else:
             st.session_state.last_check_time = current_time
             
     except Exception as e:
+        st.sidebar.error(f"Errore durante il controllo: {e}")
         st.session_state.last_check_time = current_time
 
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
     "count": st.session_state.spiral_count,
-    "update_trigger": st.session_state.update_trigger
+    "update_trigger": st.session_state.update_trigger,
+    "force_reload": st.session_state.force_reload
 }
 data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con movimento visibile e fullscreen
+# 📊 HTML + JS con fullscreen funzionante e auto-aggiornamento
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -291,26 +293,24 @@ body {{
 .glow-text {{
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }}
-:fullscreen {{
+/* Fullscreen styling */
+:fullscreen #graph-container {{
     cursor: none;
 }}
-/* Effetti di luce */
-.light-pulse {{
-    animation: lightPulse 3s ease-in-out infinite;
+:fullscreen #fullscreen-btn {{
+    opacity: 0.3;
 }}
-@keyframes lightPulse {{
-    0% {{ opacity: 0.3; }}
-    50% {{ opacity: 0.7; }}
-    100% {{ opacity: 0.3; }}
+:fullscreen #fullscreen-btn:hover {{
+    opacity: 1;
 }}
 </style>
 </head>
 <body>
 <div id="graph-container">
-    <div id="info-panel" class="light-pulse">
+    <div id="info-panel">
         <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
     </div>
-    <button id="fullscreen-btn">⛶</button>
+    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <img id="qr-code" src="{FRAME_IMAGE_URL}" alt="QR Code">
     <div id="graph"></div>
 </div>
@@ -318,7 +318,8 @@ body {{
 <script>
 const DATA = {data_json};
 let t0 = Date.now();
-let currentTraces = [];
+let currentSpiralCount = {st.session_state.spiral_count};
+let forceReload = {str(st.session_state.force_reload).lower()};
 
 function buildTraces(time){{
     const traces = [];
@@ -390,53 +391,54 @@ function render(){{
     requestAnimationFrame(render);
 }}
 
-// Inizia il rendering
-render();
-
-// Gestione fullscreen
-document.getElementById('fullscreen-btn').addEventListener('click', () => {{
-    const container = document.getElementById('graph-container');
+// FUNZIONE FULLSCREEN CORRETTA
+function toggleFullscreen() {{
+    const elem = document.getElementById('graph-container');
     if (!document.fullscreenElement) {{
-        container.requestFullscreen().catch(err => {{
+        elem.requestFullscreen().catch(err => {{
             console.log('Error attempting to enable fullscreen:', err);
         }});
     }} else {{
         document.exitFullscreen();
     }}
-}});
+}}
 
-// Aggiorna il contatore
+// Inizia il rendering
+render();
+
+// Aggiorna il contatore in tempo reale
 setInterval(() => {{
-    document.querySelector('.glow-text').textContent = `Spirali: {st.session_state.spiral_count}`;
-}}, 5000);
+    document.querySelector('.glow-text').textContent = `Spirali: ${{currentSpiralCount}}`;
+}}, 1000);
 
-// Nascondi QR code in fullscreen
+// Gestione fullscreen con doppio click
+document.getElementById('graph-container').addEventListener('dblclick', toggleFullscreen);
+
+// Nascondi elementi in fullscreen
 document.addEventListener('fullscreenchange', function() {{
     const qrCode = document.getElementById('qr-code');
     const infoPanel = document.getElementById('info-panel');
     if (document.fullscreenElement) {{
-        qrCode.style.opacity = '0.3';
-        infoPanel.style.opacity = '0.5';
+        qrCode.style.opacity = '0.2';
+        infoPanel.style.opacity = '0.4';
     }} else {{
         qrCode.style.opacity = '0.9';
         infoPanel.style.opacity = '1';
     }}
 }});
 
-// Doppio click per fullscreen
-document.getElementById('graph-container').addEventListener('dblclick', function() {{
-    const container = document.getElementById('graph-container');
-    if (!document.fullscreenElement) {{
-        container.requestFullscreen();
-    }} else {{
-        document.exitFullscreen();
-    }}
-}});
-
-// Auto-refresh ogni 30 secondi per controllare nuovi dati
-setTimeout(() => {{
+// AUTO-AGGIORNAMENTO: ricarica la pagina ogni 15 secondi per nuovi dati
+setInterval(() => {{
+    console.log('Auto-aggiornamento in corso...');
     window.location.reload();
-}}, 30000);
+}}, 15000);
+
+// Se forceReload è true, ricarica immediatamente
+if (forceReload) {{
+    setTimeout(() => {{
+        window.location.reload();
+    }}, 1000);
+}}
 </script>
 </body>
 </html>
@@ -445,43 +447,49 @@ setTimeout(() => {{
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# Sidebar per debug e controllo
+# Sidebar per controllo e debug
 with st.sidebar:
     st.title("⚙️ Controllo Opera")
     st.metric("Spirali attive", st.session_state.spiral_count)
     st.metric("Ultimo aggiornamento", st.session_state.last_update_time)
     
-    if st.button("🔄 Aggiorna manualmente"):
+    # Pulsante aggiornamento manuale
+    if st.button("🔄 Aggiorna manualmente", type="primary"):
         new_df = get_sheet_data()
+        new_count = len(new_df)
         new_hash = get_data_hash(new_df)
+        
         if new_hash != st.session_state.last_data_hash:
+            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
             st.session_state.sheet_data = new_df
-            st.session_state.spiral_count = len(new_df)
+            st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
             st.session_state.current_spirals = generate_spirals(new_df)
             st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
             st.session_state.update_trigger += 1
+            st.session_state.force_reload = True
+            st.session_state.last_check_time = time.time()
             st.rerun()
         else:
-            st.info("Nessun nuovo dato trovato")
+            st.info("📭 Nessun nuovo questionario trovato.")
+            st.session_state.last_check_time = time.time()
     
     st.info("""
-    **📊 Dati Google Sheet:**
-    - PT, Fantasy, Empathic Concern, Personal Distress
-    - Ogni riga = una spirale
-    - Punteggi 1-5 influenzano movimento e colore
+    **📊 Integrazione Google Sheet:**
+    - Controllo automatico ogni 15 secondi
+    - Ogni nuova riga = nuova spirale
+    - Colonne: PT, Fantasy, Empathic Concern, Personal Distress
     """)
+    
+    # Debug info
+    st.write("---")
+    st.write("🔍 **Debug Info:**")
+    st.write(f"Hash dati corrente: {st.session_state.last_data_hash[:10]}...")
+    st.write(f"Force reload: {st.session_state.force_reload}")
 
-# ℹ️ Descrizione artistica
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: white; padding: 2rem;'>
-    <h3 style='color: #e84393; margin-bottom: 1rem;'>🎨 SPECCHIO EMPATICO - OPERA VIVA</h3>
-    <p style='opacity: 0.8; font-style: italic;'>
-        Ogni spirale danza al ritmo unico delle risposte empatiche.<br>
-        Movimento, pulsazione e colore generati in tempo reale dai dati.
-    </p>
-</div>
-""", unsafe_allow_html=True)
+# Reset force_reload dopo l'uso
+if st.session_state.force_reload:
+    st.session_state.force_reload = False
+
 
 
