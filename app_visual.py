@@ -61,6 +61,10 @@ if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = time.time()
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
+if 'auto_reload' not in st.session_state:
+    st.session_state.auto_reload = True
+if 'page_loaded_time' not in st.session_state:
+    st.session_state.page_loaded_time = time.time()
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -153,6 +157,27 @@ st.session_state.current_spirals = spirali
 # URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
+# Controlla se ci sono nuovi dati (sul lato server)
+current_time = time.time()
+if current_time - st.session_state.last_check_time > 10:  # Controlla ogni 10 secondi
+    new_df = get_sheet_data()
+    new_hash = get_data_hash(new_df)
+    
+    if new_hash != st.session_state.last_data_hash:
+        st.session_state.sheet_data = new_df
+        st.session_state.spiral_count = len(new_df)
+        st.session_state.last_data_hash = new_hash
+        st.session_state.current_spirals = generate_spirals(new_df)
+        st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
+        st.session_state.last_check_time = current_time
+        st.rerun()
+    
+    st.session_state.last_check_time = current_time
+
+# Calcola il tempo rimanente per il prossimo aggiornamento
+next_update_seconds = 30 - (time.time() - st.session_state.page_loaded_time) % 30
+next_update_time = (datetime.now() + pd.Timedelta(seconds=next_update_seconds)).strftime("%H:%M:%S")
+
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
@@ -161,7 +186,7 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con AUTO-AGGIORNAMENTO SENZA REFRESH
+# 📊 HTML + JS con visualizzazione
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -231,33 +256,19 @@ html_code = f"""
 }}
 /* Animazione per nuove spirale */
 @keyframes spiralPulse {{
-    0% {{ 
-        opacity: 0;
-        transform: scale(0.5);
-    }}
-    50% {{
-        opacity: 1;
-        transform: scale(1.2);
-        filter: brightness(3) drop-shadow(0 0 15px #ffffff);
-    }}
-    100% {{
-        opacity: 1;
-        transform: scale(1);
-        filter: brightness(1);
-    }}
+    0% {{ filter: brightness(1); }}
+    50% {{ filter: brightness(3) drop-shadow(0 0 10px #ffffff); }}
+    100% {{ filter: brightness(1); }}
 }}
 .new-spiral {{
-    animation: spiralPulse 2s ease-out;
-}}
-.pulse {{
-    animation: spiralPulse 1s ease-in-out infinite;
+    animation: spiralPulse 2s ease-in-out;
 }}
 </style>
 </head>
 <body>
 <div id="graph-container">
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
+    <div id="status">Spirali: {st.session_state.spiral_count} | Ultimo agg.: {st.session_state.last_update_time}</div>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
     <div id="graph"></div>
 </div>
@@ -266,86 +277,20 @@ html_code = f"""
 let currentData = {initial_data_json};
 let t0 = Date.now();
 let currentSpiralCount = {st.session_state.spiral_count};
-let plotlyGraph = null;
-let checkInterval;
-let isChecking = false;
+let nextReloadTime = Date.now() + 30000; // 30 secondi da ora
 
-// Funzione per creare una nuova spirale
-function createNewSpiral(id, scores, palette) {{
-    const theta = Array.from({{length: 1200}}, (_, i) => i * 12 * Math.PI / 1200);
+function updateStatus() {{
+    const now = Date.now();
+    const timeLeft = Math.round((nextReloadTime - now) / 1000);
+    const statusElement = document.getElementById('status');
     
-    const media = scores.reduce((a, b) => a + b, 0) / scores.length;
-    const size_factor = media / 5;
-    const intensity = Math.max(0.2, Math.min(1.0, size_factor));
-    const freq = 0.5 + size_factor * 2.5;
-    
-    const r = 0.3 + id * 0.08;
-    const radius = theta.map(t => r * (t / Math.max(...theta)) * intensity * 4.5);
-    
-    const x = radius.map((r, i) => r * Math.cos(theta[i] + id));
-    const y = radius.map((r, i) => r * Math.sin(theta[i] + id));
-    
-    let y_proj;
-    if (id % 2 === 0) {{
-        y_proj = y.map((y_val, i) => y_val * 0.5 + x[i] * 0.2);
+    if (timeLeft > 0) {{
+        statusElement.textContent = 
+            `Spirali: ${{currentSpiralCount}} | Prossimo agg.: ${{timeLeft}}s`;
     }} else {{
-        y_proj = y.map((y_val, i) => y_val * 0.5 - x[i] * 0.2);
+        statusElement.textContent = 
+            "Aggiornamento in corso...";
     }}
-    
-    // Calcola offset come nel Python
-    const allY = y_proj.flat();
-    const yMin = Math.min(...allY);
-    const yMax = Math.max(...allY);
-    const yRange = yMax - yMin;
-    const OFFSET = -0.06 * yRange;
-    y_proj = y_proj.map(y => y + OFFSET);
-    
-    const base_color = palette[id % palette.length];
-    
-    return {{
-        x: x,
-        y: y_proj,
-        color: base_color,
-        intensity: intensity,
-        freq: freq,
-        id: id,
-        base_color: base_color,
-        is_new: true
-    }};
-}}
-
-// Funzione per aggiungere nuove spirali
-function addNewSpirals(newSpiralsData) {{
-    const palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"];
-    
-    newSpiralsData.forEach(newSpiral => {{
-        const scores = [
-            newSpiral.PT || 3,
-            newSpiral.Fantasy || 3,
-            newSpiral["Empathic Concern"] || 3,
-            newSpiral["Personal Distress"] || 3
-        ];
-        
-        const newSpiralObj = createNewSpiral(currentData.spirali.length, scores, palette);
-        currentData.spirali.push(newSpiralObj);
-        currentSpiralCount++;
-        
-        // Aggiungi effetto visivo
-        setTimeout(() => {{
-            newSpiralObj.is_new = false;
-        }}, 2000);
-    }});
-    
-    updateSpiralCount();
-    document.getElementById('status').classList.add('pulse');
-    setTimeout(() => {{
-        document.getElementById('status').classList.remove('pulse');
-    }}, 1000);
-}}
-
-function updateSpiralCount() {{
-    document.getElementById('status').textContent = 
-        "Spirali: " + currentSpiralCount + " | Aggiornato: " + new Date().toLocaleTimeString();
 }}
 
 function toggleFullscreen() {{
@@ -362,19 +307,14 @@ function toggleFullscreen() {{
 function buildTraces(time){{
     const traces = [];
     
+    if (!currentData.spirali) return traces;
+    
     currentData.spirali.forEach(s => {{
         const step = 4;
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
         let glowEffect = 0;
         let glowColor = s.color;
-        
-        // Effetto per nuove spirale
-        if (s.is_new) {{
-            const pulseTime = (Date.now() - t0) / 1000;
-            glowEffect = 3 + 2 * Math.sin(pulseTime * 10);
-            glowColor = '#ffffff';
-        }}
         
         for(let j = 1; j < s.x.length; j += step){{
             const segmentProgress = j / s.x.length;
@@ -413,10 +353,6 @@ function render(){{
         autosize: true
     }};
     
-    if (!plotlyGraph) {{
-        plotlyGraph = document.getElementById('graph');
-    }}
-    
     Plotly.react('graph', traces, layout, {{
         displayModeBar: false,
         scrollZoom: false,
@@ -431,6 +367,14 @@ function render(){{
 t0 = Date.now();
 render();
 
+// Aggiorna il contatore ogni secondo
+setInterval(updateStatus, 1000);
+
+// Auto-ricarica dopo 30 secondi
+setTimeout(() => {{
+    window.location.reload();
+}}, 30000);
+
 // Gestione fullscreen
 document.addEventListener('fullscreenchange', () => {{
     const logo = document.getElementById('logo');
@@ -442,17 +386,6 @@ document.addEventListener('fullscreenchange', () => {{
         logo.style.height = '60px';
     }}
 }});
-
-// Simula l'arrivo di nuovi dati (per testing)
-setTimeout(() => {{
-    // Questo è solo per dimostrazione - nella realtà verrebbero dal server
-    console.log("Simulazione nuovo dato...");
-    document.getElementById('status').textContent = 
-        "Spirali: " + currentSpiralCount + " | Controllo nuovi dati...";
-}}, 5000);
-
-// Inizializza lo status
-updateSpiralCount();
 </script>
 </body>
 </html>
@@ -463,38 +396,39 @@ st.components.v1.html(html_code, height=800, scrolling=False)
 
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE")
+st.markdown("## 🎯 SISTEMA AUTO-AGGIORNAMENTO")
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.metric("Spirali Totali", st.session_state.spiral_count, delta=None)
-    st.info("""
-    **✨ Visualizzazione ATTIVA**
-    - Spirali generate: {}
-    - Ultimo aggiornamento: {}
-    - Sistema stabile senza refresh
-    """.format(st.session_state.spiral_count, st.session_state.last_update_time))
+    st.info(f"""
+    **✨ Auto-aggiornamento ATTIVO**
+    - Controllo dati ogni 10 secondi
+    - Prossimo aggiornamento: {next_update_time}
+    - {next_update_seconds:.0f} secondi rimanenti
+    - Funziona a schermo intero
+    """)
 
 with col2:
     status = "🟢 ATTIVO" if st.session_state.spiral_count > 0 else "🟡 IN ATTESA"
     st.metric("Stato Sistema", status)
     st.info("""
     **🔧 Tecnologia:**
-    - Visualizzazione JavaScript diretta
-    - Nessun refresh di pagina
-    - Animazioni fluide
+    - Controllo lato server ogni 10 secondi
+    - Auto-ricarica ogni 30 secondi
+    - Collegamento diretto al Google Sheet
     - Supporto schermo intero
     """)
 
 st.markdown("---")
 st.success(f"""
-**✅ Sistema attivo!** Visualizzazione di {st.session_state.spiral_count} spirali.
-I nuovi questionari verranno mostrati senza interruzioni.
+**✅ Sistema attivo!** Ultimo aggiornamento: {st.session_state.last_update_time}
+La pagina si ricaricherà automaticamente tra {next_update_seconds:.0f} secondi per controllare nuovi dati.
 """)
 
 # Aggiungi un pulsante per forzare il controllo manuale
-if st.button("🔄 Aggiorna manualmente"):
+if st.button("🔍 Controlla manualmente nuovi dati"):
     new_df = get_sheet_data()
     new_count = len(new_df)
     if new_count > st.session_state.spiral_count:
@@ -509,14 +443,18 @@ if st.button("🔄 Aggiorna manualmente"):
     else:
         st.info("Nessun nuovo questionario trovato.")
 
+# Pulsante per forzare il reload
+if st.button("🔄 Ricarica ora"):
+    st.session_state.page_loaded_time = time.time()
+    st.rerun()
+
 # Note importanti
 st.markdown("---")
 st.warning("""
-**ℹ️ Modalità visualizzazione:**
-- Le spirali vengono visualizzate direttamente in JavaScript
-- Nessun refresh della pagina necessario
-- I nuovi dati richiedono un aggiornamento manuale
-- Visualizzazione stabile senza schermo nero
+**⚠️ Note importanti:**
+1. L'aggiornamento avviene ogni 30 secondi
+2. I nuovi questionari appariranno dopo il prossimo aggiornamento
+3. Lo schermo diventerà nero momentaneamente durante il refresh
+4. La visualizzazione a schermo intero verrà mantenuta dopo il refresh
 """)
-
 
