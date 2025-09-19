@@ -19,10 +19,9 @@ st.markdown("""
         height: 100%;
         width: 100%;
         background-color: black;
-        overflow: hidden;
     }
     .block-container {
-        padding: 0 !important;
+        padding: 2rem !important;
         max-width: 100% !important;
     }
     .stApp {
@@ -37,7 +36,7 @@ st.markdown("""
 
 # Funzione per desaturare i colori
 def fade_color(hex_color, fade_factor):
-    """Desatura un colore in base al fattore de fade (0-1)"""
+    """Desatura un colore in base al fattore di fade (0-1)"""
     try:
         hex_color = hex_color.lstrip('#')
         rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
@@ -64,10 +63,12 @@ if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
 if 'update_trigger' not in st.session_state:
     st.session_state.update_trigger = 0
+if 'auto_check_interval' not in st.session_state:
+    st.session_state.auto_check_interval = 15
 if 'force_reload' not in st.session_state:
     st.session_state.force_reload = False
 
-# Funzione per ottenere i dati dal Google Sheet
+# Funzione per ottenere i dati
 def get_sheet_data():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -78,48 +79,31 @@ def get_sheet_data():
         client = gspread.authorize(creds)
         sheet = client.open_by_key("16amhP4JqU5GsGg253F2WJn9rZQIpx1XsP3BHIwXq1EA").sheet1
         records = sheet.get_all_records()
-        
-        if records:
-            st.sidebar.write(f"📊 Righe trovate: {len(records)}")
-        
         return pd.DataFrame(records)
     except Exception as e:
-        st.sidebar.error(f"❌ Errore nel recupero dati: {e}")
+        st.error(f"Errore nel recupero dati: {e}")
         return pd.DataFrame()
 
 # Funzione per generare un hash dei dati
 def get_data_hash(df):
     return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
 
-# Funzione per generare le spirali con dimensioni controllate
+# Funzione per generare le spirali
 def generate_spirals(df):
-    if df.empty:
-        return []
-        
     palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-    theta = np.linspace(0, 12 * np.pi, 1000)  # Ridotto punti per performance
+    theta = np.linspace(0, 12 * np.pi, 1200)
     spirali = []
 
     for idx, row in df.iterrows():
-        # Estrai i punteggi dalle colonne del Google Sheet
-        scores = [
-            row.get("PT", 3), 
-            row.get("Fantasy", 3), 
-            row.get("Empathic Concern", 3), 
-            row.get("Personal Distress", 3)
-        ]
-        
+        scores = [row.get("PT", 3), row.get("Fantasy", 3), 
+                  row.get("Empathic Concern", 3), row.get("Personal Distress", 3)]
         media = np.mean(scores)
+        
         size_factor = media / 5
         intensity = np.clip(size_factor, 0.2, 1.0)
-        
-        # Frequenza basata sulla variabilità
+        freq = 0.5 + (media / 5) * (3.0 - 0.5)
+
         std_dev = np.std(scores) if len(scores) > 1 else 0
-        freq = 0.2 + (std_dev / 2) * 0.8
-        
-        # Ampiezza del movimento basata sull'intensità (ridotta)
-        movement_amp = 0.2 + intensity * 0.8
-        
         coherence = 1 - min(std_dev / 2, 1)
         
         dominant_dim = np.argmax(scores) if len(scores) > 0 else 0
@@ -130,75 +114,56 @@ def generate_spirals(df):
         else:
             color = fade_color(base_color, 1 - coherence)
 
-        # Genera la spirale base con dimensioni controllate
-        r = 0.2 + idx * 0.06  # Ridotto crescita spirali
-        radius = r * (theta / max(theta)) * intensity * 3.0  # Ridotto fattore scala
-        
+        r = 0.3 + idx * 0.08
+        radius = r * (theta / max(theta)) * intensity * 4.5
+
         x = radius * np.cos(theta + idx)
         y = radius * np.sin(theta + idx)
 
-        # Proiezione per alternanza
         if idx % 2 == 0:
-            y_proj = y * 0.4 + x * 0.15
+            y_proj = y * 0.5 + x * 0.2
         else:
-            y_proj = y * 0.4 - x * 0.15
+            y_proj = y * 0.5 - x * 0.2
 
         spirali.append({
-            "x": x.tolist(), 
-            "y": y_proj.tolist(), 
-            "color": color,
-            "intensity": float(intensity), 
-            "freq": float(freq),
-            "movement_amp": float(movement_amp),
-            "id": idx,
-            "base_color": base_color,
-            "pulse_phase": float(idx * 0.5),
-            "rotation_speed": float(0.1 + intensity * 0.2)  # Ridotta rotazione
+            "x": x.tolist(), "y": y_proj.tolist(), "color": color,
+            "intensity": float(intensity), "freq": float(freq), "id": idx,
+            "base_color": base_color, "is_new": False
         })
 
-    # Centra e scala le spirali per stare dentro lo schermo
     if spirali:
-        all_x = np.concatenate([np.array(s["x"]) for s in spirali])
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
-        
-        x_min, x_max = all_x.min(), all_x.max()
         y_min, y_max = all_y.min(), all_y.max()
-        
-        # Calcola il fattore di scala per stare dentro [-8, 8]
-        max_range = max(x_max - x_min, y_max - y_min)
-        if max_range > 0:
-            scale_factor = 16 / max_range * 0.9  # 90% dello spazio disponibile
-        else:
-            scale_factor = 1.0
-            
-        # Applica scaling e centra
-        for s in spirali:
-            s["x"] = (np.array(s["x"]) * scale_factor).tolist()
-            s["y"] = (np.array(s["y"]) * scale_factor).tolist()
+        y_range = y_max - y_min
+        OFFSET = -0.06 * y_range
+        for s in spirali: 
+            s["y"] = (np.array(s["y"]) + OFFSET).tolist()
     
     return spirali
 
 # Carica i dati iniziali
-if st.session_state.sheet_data.empty:
-    df = get_sheet_data()
-    st.session_state.sheet_data = df
-    st.session_state.spiral_count = len(df)
-    st.session_state.last_data_hash = get_data_hash(df)
-    st.session_state.current_spirals = generate_spirals(df)
+df = get_sheet_data()
+initial_count = len(df)
+st.session_state.spiral_count = initial_count
+st.session_state.sheet_data = df
+st.session_state.last_data_hash = get_data_hash(df)
 
-# URL per il frame.png (QR code)
+# Genera le spirali
+spirali = generate_spirals(df)
+st.session_state.current_spirals = spirali
+
+# URL corretto per l'immagine
 FRAME_IMAGE_URL = "https://raw.githubusercontent.com/riccardoboscariol/luccione-v2/main/frame.png"
 
-# Controllo automatico dei nuovi dati ogni 15 secondi
+# Controllo automatico dei nuovi dati - PRIMA del rendering HTML
 current_time = time.time()
-if current_time - st.session_state.last_check_time > 15:
+if current_time - st.session_state.last_check_time > st.session_state.auto_check_interval:
     try:
         new_df = get_sheet_data()
         new_count = len(new_df)
         new_hash = get_data_hash(new_df)
         
         if new_hash != st.session_state.last_data_hash:
-            st.sidebar.success(f"🎉 Nuovi dati! Da {st.session_state.spiral_count} a {new_count} spirali")
             st.session_state.sheet_data = new_df
             st.session_state.spiral_count = new_count
             st.session_state.last_data_hash = new_hash
@@ -212,34 +177,34 @@ if current_time - st.session_state.last_check_time > 15:
             st.session_state.last_check_time = current_time
             
     except Exception as e:
-        st.sidebar.error(f"Errore durante il controllo: {e}")
+        st.error(f"Errore durante il controllo: {e}")
         st.session_state.last_check_time = current_time
 
 # Preparazione dati per il frontend
 spirals_data = {
     "spirali": st.session_state.current_spirals,
     "count": st.session_state.spiral_count,
+    "last_update": st.session_state.last_update_time,
     "update_trigger": st.session_state.update_trigger,
+    "next_check": st.session_state.last_check_time + st.session_state.auto_check_interval,
     "force_reload": st.session_state.force_reload
 }
-data_json = json.dumps(spirals_data)
+initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con fullscreen funzionante e dimensioni controllate
+# 📊 HTML + JS con Canvas 2D personalizzato
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-html, body {{
+body {{
     margin: 0;
     padding: 0;
-    width: 100%;
-    height: 100%;
     overflow: hidden;
     background: #000000;
+    font-family: Arial, sans-serif;
 }}
-#main-container {{
+#container {{
     position: fixed;
     top: 0;
     left: 0;
@@ -247,52 +212,31 @@ html, body {{
     height: 100vh;
     background: #000000;
 }}
-#graph-container {{
+#canvas {{
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
-    position: relative;
 }}
-#graph {{
-    width: 100%;
-    height: 100%;
-}}
-#fullscreen-btn {{
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    z-index: 10000;
-    background: rgba(255, 255, 255, 0.15);
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    padding: 10px 14px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 20px;
-    backdrop-filter: blur(5px);
-    transition: all 0.3s ease;
-}}
-#fullscreen-btn:hover {{
-    background: rgba(255, 255, 255, 0.25);
-    transform: scale(1.05);
-}}
-#info-panel {{
-    position: absolute;
+#status {{
+    position: fixed;
     top: 15px;
     left: 15px;
-    z-index: 10000;
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    padding: 12px 16px;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.8);
+    color: #ffffff;
+    padding: 10px 15px;
     border-radius: 8px;
+    font-size: 14px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     backdrop-filter: blur(5px);
-    font-size: 14px;
 }}
-#qr-code {{
-    position: absolute;
+#logo {{
+    position: fixed;
     bottom: 20px;
     right: 20px;
-    z-index: 10000;
+    z-index: 1000;
     width: 60px;
     height: 60px;
     border-radius: 10px;
@@ -302,179 +246,210 @@ html, body {{
     object-fit: cover;
     transition: all 0.3s ease;
 }}
-#qr-code:hover {{
+#logo:hover {{
     transform: scale(1.1);
     opacity: 1;
 }}
-.glow-text {{
-    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+#fullscreen-btn {{
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    backdrop-filter: blur(5px);
 }}
-/* Fullscreen styling */
-:fullscreen #main-container {{
-    cursor: none;
+#fullscreen-btn:hover {{
+    background: rgba(255, 255, 255, 0.2);
 }}
-:fullscreen #fullscreen-btn {{
-    opacity: 0.3;
+.pulse {{
+    animation: pulse 2s infinite;
 }}
-:fullscreen #fullscreen-btn:hover {{
-    opacity: 1;
+@keyframes pulse {{
+    0% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }}
+    70% {{ box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }}
+    100% {{ box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }}
 }}
 </style>
 </head>
 <body>
-<div id="main-container">
-    <div id="graph-container">
-        <div id="info-panel">
-            <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
-        </div>
-        <button id="fullscreen-btn">⛶</button>
-        <img id="qr-code" src="{FRAME_IMAGE_URL}" alt="QR Code">
-        <div id="graph"></div>
-    </div>
+<div id="container">
+    <canvas id="canvas"></canvas>
+    <div id="status">Spirali: {st.session_state.spiral_count} | Auto-aggiornamento: ATTIVO</div>
+    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
+    <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
 </div>
 
 <script>
-const DATA = {data_json};
-let t0 = Date.now();
+// Dati iniziali
+let currentData = {initial_data_json};
+let spirals = currentData.spirali || [];
 let currentSpiralCount = {st.session_state.spiral_count};
+let lastUpdateTrigger = {st.session_state.update_trigger};
+let nextCheckTime = {st.session_state.last_check_time + st.session_state.auto_check_interval};
 let forceReload = {str(st.session_state.force_reload).lower()};
 
-function buildTraces(time){{
-    const traces = [];
+// Elementi DOM
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusElement = document.getElementById('status');
+
+// Variabili di rendering
+let t0 = Date.now();
+let animationId = null;
+
+// Inizializzazione canvas
+function initCanvas() {{
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}}
+
+// Funzione di rendering
+function render() {{
+    const currentTime = Date.now();
+    const elapsedTime = (currentTime - t0) / 1000;
     
-    DATA.spirali.forEach(s => {{
-        const step = 3;
-        const pulse = 0.6 + 0.4 * Math.sin(2 * Math.PI * s.freq * time + s.pulse_phase);
-        const movement = s.movement_amp * Math.sin(2 * Math.PI * s.freq * 0.5 * time + s.id * 0.7);
-        const rotation = s.rotation_speed * time;
+    // Sfondo nero
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = Math.min(canvas.width, canvas.height) / 20;
+    
+    // Renderizza spirali
+    spirals.forEach(spiral => {{
+        if (!spiral.x || !spiral.y) return;
         
-        for(let j = 1; j < s.x.length; j += step){{
-            const segmentProgress = j / s.x.length;
-            const alpha = (0.3 + 0.6 * segmentProgress) * pulse;
-            const glow = s.intensity > 0.7 ? 3 : 1;
+        const flicker = 0.6 + 0.4 * Math.sin(2 * Math.PI * spiral.freq * elapsedTime);
+        const baseAlpha = spiral.intensity * 0.8;
+        
+        ctx.beginPath();
+        
+        for (let i = 0; i < spiral.x.length; i += 2) {{
+            if (i >= spiral.x.length || i >= spiral.y.length) continue;
             
-            // Applica movimento e rotazione
-            const moveX = movement * Math.cos(segmentProgress * Math.PI * 2 + rotation);
-            const moveY = movement * Math.sin(segmentProgress * Math.PI * 2 + rotation);
+            const x = centerX + spiral.x[i] * scale;
+            const y = centerY + spiral.y[i] * scale;
             
-            const xCoords = [
-                s.x[j-1] + moveX * 0.8,
-                s.x[j] + moveX
-            ];
-            
-            const yCoords = [
-                s.y[j-1] + moveY * 0.8,
-                s.y[j] + moveY
-            ];
-            
-            traces.push({{
-                x: xCoords,
-                y: yCoords,
-                mode: "lines",
-                line: {{
-                    color: s.color, 
-                    width: 2 + s.intensity * 4 * pulse + glow,
-                    shape: 'spline'
-                }},
-                opacity: Math.max(0.15, Math.min(0.95, alpha)),
-                hoverinfo: "none",
-                showlegend: false,
-                type: "scatter"
-            }});
+            if (i === 0) {{
+                ctx.moveTo(x, y);
+            }} else {{
+                ctx.lineTo(x, y);
+            }}
         }}
+        
+        let lineWidth = 1 + spiral.intensity * 3;
+        let glowColor = spiral.color;
+        
+        if (spiral.is_new) {{
+            const pulse = 0.5 + 0.5 * Math.sin(elapsedTime * 8);
+            lineWidth *= (1 + pulse);
+            glowColor = 'rgb(255, 255, 255)';
+        }}
+        
+        ctx.strokeStyle = glowColor;
+        ctx.lineWidth = lineWidth;
+        ctx.globalAlpha = baseAlpha * flicker;
+        ctx.stroke();
     }});
-    return traces;
+    
+    ctx.globalAlpha = 1;
+    animationId = requestAnimationFrame(render);
 }}
 
-function render(){{
-    const time = (Date.now() - t0) / 1000;
-    const traces = buildTraces(time);
-    
-    const layout = {{
-        xaxis: {{visible: false, range: [-8, 8], fixedrange: true}},
-        yaxis: {{visible: false, range: [-8, 8], fixedrange: true}},
-        margin: {{t:0, b:0, l:0, r:0}},
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        autosize: true
-    }};
-    
-    Plotly.react('graph', traces, layout, {{
-        displayModeBar: false,
-        scrollZoom: false,
-        responsive: true,
-        staticPlot: false
-    }});
-    
-    requestAnimationFrame(render);
-}}
-
-// FUNZIONE FULLSCREEN CORRETTA
-function setupFullscreen() {{
-    const fullscreenBtn = document.getElementById('fullscreen-btn');
-    const container = document.getElementById('main-container');
-    
-    fullscreenBtn.addEventListener('click', function() {{
-        if (!document.fullscreenElement) {{
-            container.requestFullscreen().catch(err => {{
-                console.log('Error attempting to enable fullscreen:', err);
-            }});
-        }} else {{
-            document.exitFullscreen();
-        }}
-    }});
-    
-    // Doppio click per fullscreen
-    container.addEventListener('dblclick', function() {{
-        if (!document.fullscreenElement) {{
-            container.requestFullscreen().catch(err => {{
-                console.log('Error attempting to enable fullscreen:', err);
-            }});
-        }} else {{
-            document.exitFullscreen();
-        }}
-    }});
-}}
-
-// Inizia il rendering
-render();
-
-// Setup fullscreen
-setupFullscreen();
-
-// Aggiorna il contatore in tempo reale
-setInterval(() => {{
-    document.querySelector('.glow-text').textContent = `Spirali: ${{currentSpiralCount}}`;
-}}, 1000);
-
-// Nascondi elementi in fullscreen
-document.addEventListener('fullscreenchange', function() {{
-    const qrCode = document.getElementById('qr-code');
-    const infoPanel = document.getElementById('info-panel');
-    const fullscreenBtn = document.getElementById('fullscreen-btn');
-    
-    if (document.fullscreenElement) {{
-        qrCode.style.opacity = '0.2';
-        infoPanel.style.opacity = '0.4';
-        fullscreenBtn.textContent = '⛶ Exit';
+// Schermo intero
+function toggleFullscreen() {{
+    if (!document.fullscreenElement) {{
+        document.documentElement.requestFullscreen();
     }} else {{
-        qrCode.style.opacity = '0.9';
-        infoPanel.style.opacity = '1';
-        fullscreenBtn.textContent = '⛶';
+        document.exitFullscreen();
+    }}
+}}
+
+// Gestione resize
+function handleResize() {{
+    initCanvas();
+}}
+
+// Aggiorna il contatore di tempo
+function updateStatus() {{
+    const now = Date.now() / 1000;
+    const timeLeft = Math.max(0, nextCheckTime - now);
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = Math.floor(timeLeft % 60);
+    
+    statusElement.textContent = `Spirali: ${{currentSpiralCount}} | Prossimo controllo: ${{minutes}}m ${{seconds}}s`;
+}}
+
+// Controlla aggiornamenti
+function checkForUpdates() {{
+    const now = Date.now() / 1000;
+    
+    if (now >= nextCheckTime) {{
+        statusElement.textContent = "🔄 Controllo nuovi dati...";
+        statusElement.classList.add('pulse');
+        
+        // Forza il refresh per controllare nuovi dati
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+        
+        // Resetta il timer
+        nextCheckTime = now + {st.session_state.auto_check_interval};
+    }}
+    
+    updateStatus();
+}}
+
+// Inizializzazione
+window.addEventListener('load', function() {{
+    initCanvas();
+    render();
+    
+    // Forza il reload se necessario
+    if (forceReload) {{
+        statusElement.textContent = "🔄 Aggiornamento in corso...";
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
+        return;
+    }}
+    
+    // Controllo aggiornamenti ogni secondo
+    setInterval(checkForUpdates, 1000);
+    
+    // Aggiorna status iniziale
+    updateStatus();
+    
+    // Verifica se ci sono aggiornamenti pendenti
+    if (window.updateTrigger !== undefined && window.updateTrigger !== lastUpdateTrigger) {{
+        statusElement.textContent = "🔄 Aggiornamento dati...";
+        setTimeout(() => {{
+            window.location.reload();
+        }}, 1000);
     }}
 }});
 
-// AUTO-AGGIORNAMENTO: ricarica la pagina ogni 15 secondi per nuovi dati
-setInterval(() => {{
-    window.location.reload();
-}}, 15000);
+window.addEventListener('resize', handleResize);
 
-// Se forceReload è true, ricarica immediatamente
-if (forceReload) {{
-    setTimeout(() => {{
-        window.location.reload();
-    }}, 1000);
-}}
+// Eventi fullscreen
+document.addEventListener('fullscreenchange', handleResize);
+
+// Doppio click per fullscreen
+canvas.addEventListener('dblclick', toggleFullscreen);
+
+// Esponi le variabili per aggiornamenti
+window.updateTrigger = {st.session_state.update_trigger};
+window.currentSpiralCount = {st.session_state.spiral_count};
+window.forceReload = {str(st.session_state.force_reload).lower()};
 </script>
 </body>
 </html>
@@ -483,43 +458,94 @@ if (forceReload) {{
 # Mostra la visualizzazione
 st.components.v1.html(html_code, height=800, scrolling=False)
 
-# Sidebar per controllo e debug
-with st.sidebar:
-    st.title("⚙️ Controllo Opera")
-    st.metric("Spirali attive", st.session_state.spiral_count)
-    st.metric("Ultimo aggiornamento", st.session_state.last_update_time)
-    
-    # Pulsante aggiornamento manuale
-    if st.button("🔄 Aggiorna manualmente", type="primary"):
-        new_df = get_sheet_data()
-        new_count = len(new_df)
-        new_hash = get_data_hash(new_df)
-        
-        if new_hash != st.session_state.last_data_hash:
-            st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
-            st.session_state.sheet_data = new_df
-            st.session_state.spiral_count = new_count
-            st.session_state.last_data_hash = new_hash
-            st.session_state.current_spirals = generate_spirals(new_df)
-            st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state.update_trigger += 1
-            st.session_state.force_reload = True
-            st.session_state.last_check_time = time.time()
-            st.rerun()
-        else:
-            st.info("📭 Nessun nuovo questionario trovato.")
-            st.session_state.last_check_time = time.time()
-    
-    st.info("""
-    **📊 Integrazione Google Sheet:**
-    - Controllo automatico ogni 15 secondi
-    - Ogni nuova riga = nuova spirale
-    - Colonne: PT, Fantasy, Empathic Concern, Personal Distress
+# LEGENDA
+st.markdown("---")
+st.markdown("## 🎯 SISTEMA AUTO-AGGIORNAMENTO")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric("Spirali Totali", st.session_state.spiral_count)
+    next_check = st.session_state.last_check_time + st.session_state.auto_check_interval
+    time_left = max(0, next_check - time.time())
+    st.metric("Prossimo controllo", f"{int(time_left)}s")
+    st.info(f"""
+    **✨ Sistema ATTIVO**
+    - Controllo ogni {st.session_state.auto_check_interval}s
+    - Ultimo aggiornamento: {st.session_state.last_update_time}
+    - Sfondo nero garantito
     """)
+
+with col2:
+    status = "🟢 ATTIVO" if st.session_state.spiral_count > 0 else "🟡 IN ATTESA"
+    st.metric("Stato", status)
+    st.info("""
+    **🔧 Tecnologia:**
+    - Controllo automatico ogni 15s
+    - Refresh automatico quando nuovi dati
+    - Canvas 2D nativo
+    - Schermo intero funzionante
+    """)
+
+# Pulsante di aggiornamento manuale
+if st.button("🔄 Controlla nuovi dati ora", type="primary"):
+    new_df = get_sheet_data()
+    new_count = len(new_df)
+    new_hash = get_data_hash(new_df)
+    
+    if new_hash != st.session_state.last_data_hash:
+        st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
+        st.session_state.sheet_data = new_df
+        st.session_state.spiral_count = new_count
+        st.session_state.last_data_hash = new_hash
+        st.session_state.current_spirals = generate_spirals(new_df)
+        st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
+        st.session_state.update_trigger += 1
+        st.session_state.force_reload = True
+        st.session_state.last_check_time = time.time()
+        st.rerun()
+    else:
+        st.info("📭 Nessun nuovo questionario trovato.")
+        st.session_state.last_check_time = time.time()
+
+# Configurazione intervallo di controllo
+new_interval = st.slider("Intervallo di controllo (secondi)", 5, 60, st.session_state.auto_check_interval, 5, 
+          help="Imposta ogni quanti secondi controllare nuovi dati")
+
+if new_interval != st.session_state.auto_check_interval:
+    st.session_state.auto_check_interval = new_interval
+    st.session_state.last_check_time = time.time()
+    st.rerun()
+
+# Istruzioni
+st.markdown("---")
+st.success("""
+**✅ Istruzioni:**
+- **Doppio click** sulla visualizzazione per schermo intero
+- **Click sul pulsante ⛶** per schermo intero
+- **ESC** per uscire dallo schermo intero
+- Il sistema controlla automaticamente ogni 15 secondi
+- I nuovi dati appariranno automaticamente dopo il refresh
+""")
+
+# JavaScript per forzare l'aggiornamento se necessario
+st.markdown(f"""
+<script>
+// Forza l'aggiornamento se ci sono nuovi dati
+if (window.forceReload !== {str(st.session_state.force_reload).lower()} || 
+    window.updateTrigger !== {st.session_state.update_trigger} || 
+    window.currentSpiralCount !== {st.session_state.spiral_count}) {{
+    
+    console.log("Forzando aggiornamento...");
+    setTimeout(() => {{
+        window.location.reload();
+    }}, 500);
+}}
+</script>
+""", unsafe_allow_html=True)
 
 # Reset force_reload dopo l'uso
 if st.session_state.force_reload:
     st.session_state.force_reload = False
-
 
 
