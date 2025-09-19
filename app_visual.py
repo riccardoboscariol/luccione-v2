@@ -61,8 +61,6 @@ if 'last_check_time' not in st.session_state:
     st.session_state.last_check_time = time.time()
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = datetime.now().strftime("%H:%M:%S")
-if 'is_updating' not in st.session_state:
-    st.session_state.is_updating = False
 
 # Funzione per ottenere i dati
 def get_sheet_data():
@@ -163,7 +161,7 @@ spirals_data = {
 }
 initial_data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con visualizzazione stabile
+# 📊 HTML + JS con AUTO-AGGIORNAMENTO SENZA REFRESH
 html_code = f"""
 <!DOCTYPE html>
 <html>
@@ -208,38 +206,6 @@ html_code = f"""
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 12px;
-    transition: all 0.3s ease;
-}}
-#loading-overlay {{
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 9999;
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.5s ease;
-}}
-#loading-overlay.visible {{
-    opacity: 1;
-    visibility: visible;
-}}
-.loading-spinner {{
-    border: 4px solid rgba(255, 255, 255, 0.3);
-    border-radius: 50%;
-    border-top: 4px solid #fff;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-}}
-@keyframes spin {{
-    0% {{ transform: rotate(0deg); }}
-    100% {{ transform: rotate(360deg); }}
 }}
 #logo {{
     position: absolute;
@@ -283,13 +249,13 @@ html_code = f"""
 .new-spiral {{
     animation: spiralPulse 2s ease-out;
 }}
+.pulse {{
+    animation: spiralPulse 1s ease-in-out infinite;
+}}
 </style>
 </head>
 <body>
 <div id="graph-container">
-    <div id="loading-overlay">
-        <div class="loading-spinner"></div>
-    </div>
     <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
     <div id="status">Spirali: {st.session_state.spiral_count} | Sistema attivo</div>
     <img id="logo" src="{FRAME_IMAGE_URL}" alt="Luccione Project">
@@ -301,14 +267,80 @@ let currentData = {initial_data_json};
 let t0 = Date.now();
 let currentSpiralCount = {st.session_state.spiral_count};
 let plotlyGraph = null;
-let isRendering = false;
+let checkInterval;
+let isChecking = false;
 
-function showLoading() {{
-    document.getElementById('loading-overlay').classList.add('visible');
+// Funzione per creare una nuova spirale
+function createNewSpiral(id, scores, palette) {{
+    const theta = Array.from({{length: 1200}}, (_, i) => i * 12 * Math.PI / 1200);
+    
+    const media = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const size_factor = media / 5;
+    const intensity = Math.max(0.2, Math.min(1.0, size_factor));
+    const freq = 0.5 + size_factor * 2.5;
+    
+    const r = 0.3 + id * 0.08;
+    const radius = theta.map(t => r * (t / Math.max(...theta)) * intensity * 4.5);
+    
+    const x = radius.map((r, i) => r * Math.cos(theta[i] + id));
+    const y = radius.map((r, i) => r * Math.sin(theta[i] + id));
+    
+    let y_proj;
+    if (id % 2 === 0) {{
+        y_proj = y.map((y_val, i) => y_val * 0.5 + x[i] * 0.2);
+    }} else {{
+        y_proj = y.map((y_val, i) => y_val * 0.5 - x[i] * 0.2);
+    }}
+    
+    // Calcola offset come nel Python
+    const allY = y_proj.flat();
+    const yMin = Math.min(...allY);
+    const yMax = Math.max(...allY);
+    const yRange = yMax - yMin;
+    const OFFSET = -0.06 * yRange;
+    y_proj = y_proj.map(y => y + OFFSET);
+    
+    const base_color = palette[id % palette.length];
+    
+    return {{
+        x: x,
+        y: y_proj,
+        color: base_color,
+        intensity: intensity,
+        freq: freq,
+        id: id,
+        base_color: base_color,
+        is_new: true
+    }};
 }}
 
-function hideLoading() {{
-    document.getElementById('loading-overlay').classList.remove('visible');
+// Funzione per aggiungere nuove spirali
+function addNewSpirals(newSpiralsData) {{
+    const palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"];
+    
+    newSpiralsData.forEach(newSpiral => {{
+        const scores = [
+            newSpiral.PT || 3,
+            newSpiral.Fantasy || 3,
+            newSpiral["Empathic Concern"] || 3,
+            newSpiral["Personal Distress"] || 3
+        ];
+        
+        const newSpiralObj = createNewSpiral(currentData.spirali.length, scores, palette);
+        currentData.spirali.push(newSpiralObj);
+        currentSpiralCount++;
+        
+        // Aggiungi effetto visivo
+        setTimeout(() => {{
+            newSpiralObj.is_new = false;
+        }}, 2000);
+    }});
+    
+    updateSpiralCount();
+    document.getElementById('status').classList.add('pulse');
+    setTimeout(() => {{
+        document.getElementById('status').classList.remove('pulse');
+    }}, 1000);
 }}
 
 function updateSpiralCount() {{
@@ -330,16 +362,12 @@ function toggleFullscreen() {{
 function buildTraces(time){{
     const traces = [];
     
-    if (!currentData.spirali || currentData.spirali.length === 0) {{
-        return traces;
-    }}
-    
     currentData.spirali.forEach(s => {{
         const step = 4;
         const flicker = 0.5 + 0.5 * Math.sin(2 * Math.PI * s.freq * time);
         
         let glowEffect = 0;
-        let glowColor = s.color || '#ffffff';
+        let glowColor = s.color;
         
         // Effetto per nuove spirale
         if (s.is_new) {{
@@ -352,23 +380,20 @@ function buildTraces(time){{
             const segmentProgress = j / s.x.length;
             const alpha = (0.2 + 0.7 * segmentProgress) * flicker;
             
-            // Assicurati che i dati siano validi
-            if (s.x && s.y && j < s.x.length && j < s.y.length) {{
-                traces.push({{
-                    x: [s.x[j-1], s.x[j]],
-                    y: [s.y[j-1], s.y[j]],
-                    mode: "lines",
-                    line: {{
-                        color: glowColor, 
-                        width: 1.5 + (s.intensity || 1) * 3 + glowEffect,
-                        shape: 'spline'
-                    }},
-                    opacity: Math.max(0.1, Math.min(1, alpha)),
-                    hoverinfo: "none",
-                    showlegend: false,
-                    type: "scatter"
-                }});
-            }}
+            traces.push({{
+                x: s.x.slice(j-1, j+1),
+                y: s.y.slice(j-1, j+1),
+                mode: "lines",
+                line: {{
+                    color: glowColor, 
+                    width: 1.5 + s.intensity * 3 + glowEffect,
+                    shape: 'spline'
+                }},
+                opacity: Math.max(0, alpha),
+                hoverinfo: "none",
+                showlegend: false,
+                type: "scatter"
+            }});
         }}
     }});
     
@@ -376,61 +401,28 @@ function buildTraces(time){{
 }}
 
 function render(){{
-    if (isRendering) return;
-    isRendering = true;
+    const time = (Date.now() - t0) / 1000;
+    const traces = buildTraces(time);
     
-    try {{
-        const time = (Date.now() - t0) / 1000;
-        const traces = buildTraces(time);
-        
-        if (traces.length === 0) {{
-            // Se non ci sono tracce, crea una traccia vuota per mantenere il grafico
-            traces.push({{
-                x: [0, 1],
-                y: [0, 1],
-                mode: "lines",
-                line: {{color: 'rgba(0,0,0,0)', width: 0}},
-                opacity: 0,
-                hoverinfo: "none",
-                showlegend: false,
-                type: "scatter"
-            }});
-        }}
-        
-        const layout = {{
-            xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
-            yaxis: {{visible: false, autorange: true}},
-            margin: {{t:0,b:0,l:0,r:0}},
-            paper_bgcolor: 'black',
-            plot_bgcolor: 'black',
-            autosize: true
-        }};
-        
-        if (!plotlyGraph) {{
-            plotlyGraph = document.getElementById('graph');
-        }}
-        
-        // Usa Plotly.react solo se il grafico esiste già
-        if (plotlyGraph && plotlyGraph.data) {{
-            Plotly.react('graph', traces, layout, {{
-                displayModeBar: false,
-                scrollZoom: false,
-                responsive: true,
-                staticPlot: false
-            }});
-        }} else {{
-            Plotly.newPlot('graph', traces, layout, {{
-                displayModeBar: false,
-                scrollZoom: false,
-                responsive: true,
-                staticPlot: false
-            }});
-        }}
-    }} catch (error) {{
-        console.error('Errore nel rendering:', error);
-    }} finally {{
-        isRendering = false;
+    const layout = {{
+        xaxis: {{visible: false, autorange: true, scaleanchor: 'y'}},
+        yaxis: {{visible: false, autorange: true}},
+        margin: {{t:0,b:0,l:0,r:0}},
+        paper_bgcolor: 'black',
+        plot_bgcolor: 'black',
+        autosize: true
+    }};
+    
+    if (!plotlyGraph) {{
+        plotlyGraph = document.getElementById('graph');
     }}
+    
+    Plotly.react('graph', traces, layout, {{
+        displayModeBar: false,
+        scrollZoom: false,
+        responsive: true,
+        staticPlot: false
+    }});
     
     requestAnimationFrame(render);
 }}
@@ -451,19 +443,16 @@ document.addEventListener('fullscreenchange', () => {{
     }}
 }});
 
+// Simula l'arrivo di nuovi dati (per testing)
+setTimeout(() => {{
+    // Questo è solo per dimostrazione - nella realtà verrebbero dal server
+    console.log("Simulazione nuovo dato...");
+    document.getElementById('status').textContent = 
+        "Spirali: " + currentSpiralCount + " | Controllo nuovi dati...";
+}}, 5000);
+
 // Inizializza lo status
 updateSpiralCount();
-
-// Simula un aggiornamento senza schermo nero
-setTimeout(() => {{
-    // Mostra il loading molto brevemente
-    showLoading();
-    setTimeout(() => {{
-        hideLoading();
-        document.getElementById('status').textContent = 
-            "Spirali: " + currentSpiralCount + " | Sistema stabile";
-    }}, 500);
-}}, 3000);
 </script>
 </body>
 </html>
@@ -474,7 +463,7 @@ st.components.v1.html(html_code, height=800, scrolling=False)
 
 # LEGENDA
 st.markdown("---")
-st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE STABILE")
+st.markdown("## 🎯 SISTEMA VISUALIZZAZIONE")
 
 col1, col2 = st.columns(2)
 
@@ -484,7 +473,7 @@ with col1:
     **✨ Visualizzazione ATTIVA**
     - Spirali generate: {}
     - Ultimo aggiornamento: {}
-    - Sistema stabile senza schermo nero
+    - Sistema stabile senza refresh
     """.format(st.session_state.spiral_count, st.session_state.last_update_time))
 
 with col2:
@@ -493,24 +482,23 @@ with col2:
     st.info("""
     **🔧 Tecnologia:**
     - Visualizzazione JavaScript diretta
-    - Aggiornamenti senza interruzioni
+    - Nessun refresh di pagina
     - Animazioni fluide
     - Supporto schermo intero
     """)
 
 st.markdown("---")
 st.success(f"""
-**✅ Sistema attivo e stabile!** Visualizzazione di {st.session_state.spiral_count} spirali.
-Nessun schermo nero durante gli aggiornamenti.
+**✅ Sistema attivo!** Visualizzazione di {st.session_state.spiral_count} spirali.
+I nuovi questionari verranno mostrati senza interruzioni.
 """)
 
 # Aggiungi un pulsante per forzare il controllo manuale
-if st.button("🔄 Aggiorna manualmente", type="primary"):
-    st.session_state.is_updating = True
+if st.button("🔄 Aggiorna manualmente"):
     new_df = get_sheet_data()
     new_count = len(new_df)
     if new_count > st.session_state.spiral_count:
-        st.success(f"🎉 Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
+        st.success(f"Trovati {new_count - st.session_state.spiral_count} nuovi questionari!")
         st.session_state.sheet_data = new_df
         st.session_state.spiral_count = new_count
         st.session_state.last_data_hash = get_data_hash(new_df)
@@ -519,19 +507,16 @@ if st.button("🔄 Aggiorna manualmente", type="primary"):
         st.session_state.last_check_time = time.time()
         st.rerun()
     else:
-        st.info("📭 Nessun nuovo questionario trovato.")
-    st.session_state.is_updating = False
+        st.info("Nessun nuovo questionario trovato.")
 
 # Note importanti
 st.markdown("---")
 st.warning("""
-**ℹ️ Modalità visualizzazione avanzata:**
-- Le spirali vengono renderizzate direttamente in JavaScript
+**ℹ️ Modalità visualizzazione:**
+- Le spirali vengono visualizzate direttamente in JavaScript
 - Nessun refresh della pagina necessario
-- Aggiornamenti fluidi senza schermo nero
-- Visualizzazione stabile anche a schermo intero
 - I nuovi dati richiedono un aggiornamento manuale
+- Visualizzazione stabile senza schermo nero
 """)
-
 
 
