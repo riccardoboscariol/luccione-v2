@@ -79,10 +79,8 @@ def get_sheet_data():
         sheet = client.open_by_key("16amhP4JqU5GsGg253F2WJn9rZQIpx1XsP3BHIwXq1EA").sheet1
         records = sheet.get_all_records()
         
-        # Debug: mostra i primi record
         if records:
             st.sidebar.write(f"📊 Righe trovate: {len(records)}")
-            st.sidebar.write(f"📝 Ultima riga: {records[-1]}")
         
         return pd.DataFrame(records)
     except Exception as e:
@@ -93,13 +91,13 @@ def get_sheet_data():
 def get_data_hash(df):
     return hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()
 
-# Funzione per generare le spirali con movimento dinamico
+# Funzione per generare le spirali con dimensioni controllate
 def generate_spirals(df):
     if df.empty:
         return []
         
     palette = ["#e84393", "#e67e22", "#3498db", "#9b59b6", "#2ecc71", "#f1c40f"]
-    theta = np.linspace(0, 12 * np.pi, 1200)
+    theta = np.linspace(0, 12 * np.pi, 1000)  # Ridotto punti per performance
     spirali = []
 
     for idx, row in df.iterrows():
@@ -119,8 +117,8 @@ def generate_spirals(df):
         std_dev = np.std(scores) if len(scores) > 1 else 0
         freq = 0.2 + (std_dev / 2) * 0.8
         
-        # Ampiezza del movimento basata sull'intensità
-        movement_amp = 0.3 + intensity * 1.2
+        # Ampiezza del movimento basata sull'intensità (ridotta)
+        movement_amp = 0.2 + intensity * 0.8
         
         coherence = 1 - min(std_dev / 2, 1)
         
@@ -132,17 +130,18 @@ def generate_spirals(df):
         else:
             color = fade_color(base_color, 1 - coherence)
 
-        # Genera la spirale base
-        r = 0.3 + idx * 0.08
-        radius = r * (theta / max(theta)) * intensity * 4.5
+        # Genera la spirale base con dimensioni controllate
+        r = 0.2 + idx * 0.06  # Ridotto crescita spirali
+        radius = r * (theta / max(theta)) * intensity * 3.0  # Ridotto fattore scala
+        
         x = radius * np.cos(theta + idx)
         y = radius * np.sin(theta + idx)
 
         # Proiezione per alternanza
         if idx % 2 == 0:
-            y_proj = y * 0.5 + x * 0.2
+            y_proj = y * 0.4 + x * 0.15
         else:
-            y_proj = y * 0.5 - x * 0.2
+            y_proj = y * 0.4 - x * 0.15
 
         spirali.append({
             "x": x.tolist(), 
@@ -154,17 +153,28 @@ def generate_spirals(df):
             "id": idx,
             "base_color": base_color,
             "pulse_phase": float(idx * 0.5),
-            "rotation_speed": float(0.1 + intensity * 0.3)
+            "rotation_speed": float(0.1 + intensity * 0.2)  # Ridotta rotazione
         })
 
-    # Centra le spirali
+    # Centra e scala le spirali per stare dentro lo schermo
     if spirali:
+        all_x = np.concatenate([np.array(s["x"]) for s in spirali])
         all_y = np.concatenate([np.array(s["y"]) for s in spirali])
+        
+        x_min, x_max = all_x.min(), all_x.max()
         y_min, y_max = all_y.min(), all_y.max()
-        y_range = y_max - y_min
-        OFFSET = -0.06 * y_range
-        for s in spirali: 
-            s["y"] = (np.array(s["y"]) + OFFSET).tolist()
+        
+        # Calcola il fattore di scala per stare dentro [-8, 8]
+        max_range = max(x_max - x_min, y_max - y_min)
+        if max_range > 0:
+            scale_factor = 16 / max_range * 0.9  # 90% dello spazio disponibile
+        else:
+            scale_factor = 1.0
+            
+        # Applica scaling e centra
+        for s in spirali:
+            s["x"] = (np.array(s["x"]) * scale_factor).tolist()
+            s["y"] = (np.array(s["y"]) * scale_factor).tolist()
     
     return spirali
 
@@ -214,21 +224,22 @@ spirals_data = {
 }
 data_json = json.dumps(spirals_data)
 
-# 📊 HTML + JS con fullscreen funzionante e auto-aggiornamento
+# 📊 HTML + JS con fullscreen funzionante e dimensioni controllate
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-body {{ 
-    margin: 0; 
-    padding: 0; 
-    background: #000000;
+html, body {{
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
-    font-family: 'Arial', sans-serif;
+    background: #000000;
 }}
-#graph-container {{
+#main-container {{
     position: fixed;
     top: 0;
     left: 0;
@@ -236,7 +247,12 @@ body {{
     height: 100vh;
     background: #000000;
 }}
-#graph {{ 
+#graph-container {{
+    width: 100%;
+    height: 100%;
+    position: relative;
+}}
+#graph {{
     width: 100%;
     height: 100%;
 }}
@@ -294,7 +310,7 @@ body {{
     text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }}
 /* Fullscreen styling */
-:fullscreen #graph-container {{
+:fullscreen #main-container {{
     cursor: none;
 }}
 :fullscreen #fullscreen-btn {{
@@ -306,13 +322,15 @@ body {{
 </style>
 </head>
 <body>
-<div id="graph-container">
-    <div id="info-panel">
-        <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
+<div id="main-container">
+    <div id="graph-container">
+        <div id="info-panel">
+            <span class="glow-text">Spirali: {st.session_state.spiral_count}</span>
+        </div>
+        <button id="fullscreen-btn">⛶</button>
+        <img id="qr-code" src="{FRAME_IMAGE_URL}" alt="QR Code">
+        <div id="graph"></div>
     </div>
-    <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶</button>
-    <img id="qr-code" src="{FRAME_IMAGE_URL}" alt="QR Code">
-    <div id="graph"></div>
 </div>
 
 <script>
@@ -373,7 +391,7 @@ function render(){{
     const traces = buildTraces(time);
     
     const layout = {{
-        xaxis: {{visible: false, range: [-12, 12], fixedrange: true}},
+        xaxis: {{visible: false, range: [-8, 8], fixedrange: true}},
         yaxis: {{visible: false, range: [-8, 8], fixedrange: true}},
         margin: {{t:0, b:0, l:0, r:0}},
         paper_bgcolor: 'rgba(0,0,0,0)',
@@ -392,44 +410,62 @@ function render(){{
 }}
 
 // FUNZIONE FULLSCREEN CORRETTA
-function toggleFullscreen() {{
-    const elem = document.getElementById('graph-container');
-    if (!document.fullscreenElement) {{
-        elem.requestFullscreen().catch(err => {{
-            console.log('Error attempting to enable fullscreen:', err);
-        }});
-    }} else {{
-        document.exitFullscreen();
-    }}
+function setupFullscreen() {{
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    const container = document.getElementById('main-container');
+    
+    fullscreenBtn.addEventListener('click', function() {{
+        if (!document.fullscreenElement) {{
+            container.requestFullscreen().catch(err => {{
+                console.log('Error attempting to enable fullscreen:', err);
+            }});
+        }} else {{
+            document.exitFullscreen();
+        }}
+    }});
+    
+    // Doppio click per fullscreen
+    container.addEventListener('dblclick', function() {{
+        if (!document.fullscreenElement) {{
+            container.requestFullscreen().catch(err => {{
+                console.log('Error attempting to enable fullscreen:', err);
+            }});
+        }} else {{
+            document.exitFullscreen();
+        }}
+    }});
 }}
 
 // Inizia il rendering
 render();
+
+// Setup fullscreen
+setupFullscreen();
 
 // Aggiorna il contatore in tempo reale
 setInterval(() => {{
     document.querySelector('.glow-text').textContent = `Spirali: ${{currentSpiralCount}}`;
 }}, 1000);
 
-// Gestione fullscreen con doppio click
-document.getElementById('graph-container').addEventListener('dblclick', toggleFullscreen);
-
 // Nascondi elementi in fullscreen
 document.addEventListener('fullscreenchange', function() {{
     const qrCode = document.getElementById('qr-code');
     const infoPanel = document.getElementById('info-panel');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+    
     if (document.fullscreenElement) {{
         qrCode.style.opacity = '0.2';
         infoPanel.style.opacity = '0.4';
+        fullscreenBtn.textContent = '⛶ Exit';
     }} else {{
         qrCode.style.opacity = '0.9';
         infoPanel.style.opacity = '1';
+        fullscreenBtn.textContent = '⛶';
     }}
 }});
 
 // AUTO-AGGIORNAMENTO: ricarica la pagina ogni 15 secondi per nuovi dati
 setInterval(() => {{
-    console.log('Auto-aggiornamento in corso...');
     window.location.reload();
 }}, 15000);
 
@@ -480,15 +516,10 @@ with st.sidebar:
     - Ogni nuova riga = nuova spirale
     - Colonne: PT, Fantasy, Empathic Concern, Personal Distress
     """)
-    
-    # Debug info
-    st.write("---")
-    st.write("🔍 **Debug Info:**")
-    st.write(f"Hash dati corrente: {st.session_state.last_data_hash[:10]}...")
-    st.write(f"Force reload: {st.session_state.force_reload}")
 
 # Reset force_reload dopo l'uso
 if st.session_state.force_reload:
     st.session_state.force_reload = False
+
 
 
